@@ -48,6 +48,7 @@ intersection branches, and `_check_associative`.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -251,9 +252,21 @@ def evaluate(node: ast.AST, env: dict, line: int, budget: Budget):
         # here. It is confined to the containers a record can actually be:
         # there is no object whose items lead anywhere.
         target = evaluate(node.value, env, line, budget)
+        if isinstance(target, dict):
+            # A dict is a container of plain values like any other here, and
+            # looking one up reaches nothing an object could hide.
+            key = evaluate(node.slice, env, line, budget)
+            if key not in target:
+                raise NotationError([Diagnostic(
+                    node.lineno + line - 1, node.col_offset + 1, "error",
+                    f"there is no key {key!r} here",
+                    hint="keys present: "
+                         + (", ".join(repr(k) for k in list(target)[:6]) or "none"))])
+            return target[key]
         if not isinstance(target, (list, tuple, str)):
             raise _reject(node, line,
-                          "only a list, a tuple or a string can be indexed")
+                          "only a list, a tuple, a string or a dict can be "
+                          "indexed")
         index = _index_of(node.slice, env, line, budget)
         try:
             return target[index]
@@ -263,8 +276,36 @@ def evaluate(node: ast.AST, env: dict, line: int, budget: Budget):
                 f"index {index} is past the end of this record",
                 hint=f"the record here has {len(target)} field(s)")])
 
-    if isinstance(node, ast.ListComp):
-        return _comprehension(node, env, line, budget)
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        out = _comprehension(node, env, line, budget)
+        return set(out) if isinstance(node, ast.SetComp) else out
+
+    if isinstance(node, ast.Dict):
+        if any(k is None for k in node.keys):        # {**other}
+            raise _reject(node, line, "** is not allowed in a dict here")
+        return {evaluate(k, env, line, budget): evaluate(v, env, line, budget)
+                for k, v in zip(node.keys, node.values)}
+
+    if isinstance(node, ast.Set):
+        return {evaluate(e, env, line, budget) for e in node.elts}
+
+    if isinstance(node, ast.JoinedStr):
+        # An f-string. Every piece is evaluated by this same walker, and only
+        # the plain values a record can hold are formatted, so `f"{x}"` cannot
+        # reach an object's own __format__.
+        parts = []
+        for piece in node.values:
+            if isinstance(piece, ast.Constant):
+                parts.append(str(piece.value))
+                continue
+            value = evaluate(piece.value, env, line, budget)
+            if not isinstance(value, (str, int, float, bool)) and value is not None:
+                raise _reject(piece, line,
+                              "only a number or a string can be formatted here")
+            spec = (evaluate(piece.format_spec, env, line, budget)
+                    if piece.format_spec is not None else "")
+            parts.append(format(value, spec) if spec else str(value))
+        return "".join(parts)
 
     if isinstance(node, ast.Call):
         return _call(node, env, line, budget)
@@ -284,27 +325,35 @@ def _index_of(node, env, line, budget):
 
 
 def _comprehension(node: ast.ListComp, env: dict, line: int, budget: Budget):
-    """`[w for w in row.split() if w]` — one generator, which is what Spark
-    code uses it for. Nested generators are refused rather than silently
-    costing a student a page-freeze."""
-    if len(node.generators) != 1:
-        raise _reject(node, line, "a comprehension may have one 'for'")
-    gen = node.generators[0]
-    names = _targets(gen.target, line)
-    out = []
-    for item in evaluate(gen.iter, env, line, budget):
-        budget.spend()
-        if len(names) == 1:
-            scope = {**env, names[0]: item}
-        else:
-            values = list(item)
-            if len(values) != len(names):
-                raise _reject(gen.target, line,
-                              f"this record has {len(values)} field(s), "
-                              f"but {len(names)} were named")
-            scope = {**env, **dict(zip(names, values))}
-        if all(evaluate(c, scope, line, budget) for c in gen.ifs):
+    """`[w for w in row.split() if w]`, and the nested form too.
+
+    Nesting used to be refused, on the grounds that it could cost a page
+    freeze. The budget already answers that — it caps evaluation whatever
+    shape the expression is — so the restriction only ruled out Python that
+    Spark code legitimately writes."""
+    out: list = []
+
+    def walk(index: int, scope: dict):
+        if index == len(node.generators):
             out.append(evaluate(node.elt, scope, line, budget))
+            return
+        gen = node.generators[index]
+        names = _targets(gen.target, line)
+        for item in evaluate(gen.iter, scope, line, budget):
+            budget.spend()
+            if len(names) == 1:
+                inner = {**scope, names[0]: item}
+            else:
+                values = list(item)
+                if len(values) != len(names):
+                    raise _reject(gen.target, line,
+                                  f"this record has {len(values)} field(s), "
+                                  f"but {len(names)} were named")
+                inner = {**scope, **dict(zip(names, values))}
+            if all(evaluate(c, inner, line, budget) for c in gen.ifs):
+                walk(index + 1, inner)
+
+    walk(0, env)
     return out
 
 
@@ -794,7 +843,7 @@ def resolve_input(name, inputs: dict, line: int) -> list:
     """
     import pathlib as _pathlib
 
-    key = str(name).strip('"')
+    key = str(name).strip('"').strip("'")
     for candidate in (key, _pathlib.Path(key).stem):
         if candidate in inputs:
             value = inputs[candidate]
@@ -866,12 +915,13 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None) -> Pipeline
                         rdd.line, 1, "error",
                         f"a pipeline starts by reading something, not with {op!r}",
                         hint="start with textFile(\"…\") or parallelize([…])")])
-                if op == "textFile":
-                    data = resolve_input(args[0] if args else "", inputs, rdd.line)
-                elif op == "parallelize":
-                    data = list(_arg(args[0], rdd.line, budget)) if args else []
+                values, _ = (parse_arguments(args[0], rdd.line, budget)
+                             if args else ([], {}))
+                if op == "parallelize":
+                    data = list(values[0]) if values else []
                 else:
-                    data = resolve_input(args[0] if args else "", inputs, rdd.line)
+                    data = resolve_input(values[0] if values else "",
+                                         inputs, rdd.line)
                 step = Step(name=name, op=op, parents=[], data=data,
                             stage=0, line=rdd.line, named=last)
             else:
@@ -892,11 +942,16 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None) -> Pipeline
                 # iterative job appeared to gain a stage per round that it does
                 # not actually have.
                 stage = parent.stage + 1 if op in WIDE else parent.stage
-                values = []
-                for text in args:
-                    other = known.get(text.strip())
-                    values.append(other.data if other is not None
-                                  else _arg(text, rdd.line, budget))
+                # An RDD named as an argument — `left.join(right)` — arrives
+                # as its records rather than as an unknown name.
+                blob = args[0] if args else ""
+                named = known.get(blob.strip())
+                if named is not None:
+                    values, options = [named.data], {}
+                else:
+                    values, options = parse_arguments(blob, rdd.line, budget) \
+                        if blob.strip() else ([], {})
+                values = list(values) + list(options.values())
                 data = _apply(op, values, parent.data,
                               _Where(rdd.line), rdd.line, budget,
                               warnings=pipe.warnings)
@@ -1142,3 +1197,130 @@ def explain(line_text: str, line_no: int, column: int = 1) -> Diagnostic | None:
         hint="a lambda may use arithmetic, comparisons, indexing, tuples, "
              "and the string methods Spark code normally uses — no attribute "
              "access, imports or calls to anything else")
+
+
+# --- keeping PySpark out of the grammar ---------------------------------
+
+# The operations whose arguments are PySpark. A leading dot is required, and
+# that is not cosmetic: `sum`, `min`, `max`, `count`, `first` and `take` are
+# all Spark actions *and* the names of ordinary builtins that Assignment 1's
+# functions call directly. Matching those without the dot would blank out the
+# body of a function this module has no business touching — and it would do it
+# silently, because the result still parses.
+_METHOD_CALL = re.compile(r"\.\s*(" + "|".join(sorted(TRANSFORMS | ACTIONS)) + r")\s*\(")
+
+# A pipeline's first step. These two name a source and nothing else, so they
+# are recognised without a dot.
+_SOURCE_CALL = re.compile(r"\b(" + "|".join(sorted(SOURCES)) + r")\s*\(")
+
+
+def _comment_spans(source: str) -> list:
+    """Where a comment runs on each line. A call inside one is prose."""
+    spans, at = [], 0
+    for raw in source.splitlines(keepends=True):
+        quote = ""
+        for i, ch in enumerate(raw):
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "#":
+                spans.append((at + i, at + len(raw)))
+                break
+        at += len(raw)
+    return spans
+
+
+def _closing(source: str, start: int) -> int:
+    """The index of the ')' that closes the '(' just before `start`."""
+    depth, i, quote = 1, start, ""
+    while i < len(source) and depth:
+        ch = source[i]
+        if quote:
+            if ch == "\\":
+                i += 2                      # an escaped character, whatever it is
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        i += 1
+    return i - 1 if depth == 0 else -1
+
+
+def mask_arguments(source: str) -> tuple[str, dict]:
+    """
+    Hide every PySpark argument list from the course grammar.
+
+    Each argument list is replaced by a run of underscores of exactly the same
+    length, so the masked text has the same lines, the same columns and the
+    same length as the original. That is what lets the grammar report a
+    position the editor can still use, and lets the argument be recovered by
+    slicing the original at the same offsets.
+
+    The grammar therefore never sees a lambda, a comprehension, a slice or a
+    tuple, and does not need rules for any of them — which is the point. Those
+    rules had to live in the *shared* expression grammar, where Assignment 1's
+    functions and Assignment 3's clocks are also written, and every one of them
+    was a chance to break those. Here the two languages cannot reach each other:
+    nothing is hidden in a program that has no pipeline in it.
+
+    Returns the masked source and {start offset: (end offset, original text)}.
+    """
+    comments = _comment_spans(source)
+
+    def in_comment(pos: int) -> bool:
+        return any(a <= pos < b for a, b in comments)
+
+    hits = []
+    for pattern in (_METHOD_CALL, _SOURCE_CALL):
+        for m in pattern.finditer(source):
+            if not in_comment(m.start()):
+                hits.append(m.end())
+    hits.sort()
+
+    out, spans, guard = list(source), {}, 0
+    for start in hits:
+        if start < guard:
+            continue                        # already inside a hidden argument
+        end = _closing(source, start)
+        if end < 0:
+            continue                        # unbalanced: let the grammar say so
+        text = source[start:end]
+        if not text.strip():
+            continue                        # `.cache()` has nothing to hide
+        # Newlines are kept so line numbers survive; everything else becomes
+        # an underscore, which the grammar reads as one ordinary name.
+        out[start:end] = [("\n" if ch == "\n" else "_") for ch in text]
+        spans[start] = (end, text)
+        guard = end
+    return "".join(out), spans
+
+
+def parse_arguments(text: str, line: int, budget: Budget) -> tuple:
+    """
+    One hidden argument list, as the values it denotes.
+
+    Split by Python rather than by counting brackets. A hand-written splitter
+    got `lambda a, b: a + b` wrong — a lambda's own parameter comma sits at
+    bracket depth zero and reads exactly like a separator. Wrapping the text in
+    a call and letting Python parse it removes the question.
+    """
+    try:
+        tree = ast.parse("_f(" + text + ")", mode="eval")
+    except SyntaxError as e:
+        raise NotationError([Diagnostic(
+            line, (e.offset or 1), "error",
+            f"this is not valid Python: {e.msg}",
+            hint="the functions a transformation takes are real PySpark "
+                 "lambdas, so Python's own rules apply")])
+    call = tree.body
+    args = [evaluate(a, {}, line, budget) for a in call.args]
+    options = {kw.arg: evaluate(kw.value, {}, line, budget)
+               for kw in call.keywords if kw.arg}
+    return args, options

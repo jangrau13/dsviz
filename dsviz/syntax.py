@@ -455,9 +455,16 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
     """
     from .grammar import parser, position
 
+    from .pyspark import mask_arguments
+
     mod = Module()
     diags: list[Diagnostic] = []
     lines = source.splitlines()
+    # The grammar reads a copy with every PySpark argument blanked out, so it
+    # never has to know what a lambda is. The blanks are the same length as
+    # what they replaced, so every position it reports still points into the
+    # real source — which is what `lines` and `arg_sources` go on using.
+    masked, hidden = mask_arguments(source)
 
     def body_of(node) -> list:
         """
@@ -581,6 +588,14 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
                         if getattr(c, "data", None) == "args"), None)
         if arglist is None:
             return []
+        meta = getattr(arglist, "meta", None)
+        if meta is not None and not getattr(meta, "empty", True):
+            blanked = hidden.get(meta.start_pos)
+            if blanked is not None:
+                # A hidden argument list stays one piece here; `pyspark.build`
+                # hands it to Python, which is the only thing that can say
+                # where one argument ends and the next begins.
+                return [blanked[1]]
         out = []
         for child in arglist.children:
             meta = getattr(child, "meta", None)
@@ -730,7 +745,7 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
             mod.statements.append((_tok(node), position(node)[0]))
 
     try:
-        tree = parser().parse(source)
+        tree = parser().parse(masked)
     except Exception as e:
         line = getattr(e, "line", 1) or 1
         col = getattr(e, "column", 1) or 1

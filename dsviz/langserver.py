@@ -467,8 +467,11 @@ class Analysis:
 
 def syntax_check(source: str) -> list[Diagnostic]:
     """Grammar-level errors, with column-accurate positions from Lark."""
+    from .pyspark import mask_arguments
+
+    masked, _ = mask_arguments(source)
     try:
-        parser().parse(source if source.endswith("\n") else source + "\n")
+        parser().parse(masked if masked.endswith("\n") else masked + "\n")
         return []
     except UnexpectedInput as e:
         expected = ""

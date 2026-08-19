@@ -115,48 +115,21 @@ lose: KW_LOSE NAME [KW_ON NAME]
 note: KW_NOTE /[^\n]+/
 
 // --- expressions ------------------------------------------------------
-// Spark takes its functions as lambdas, so the notation accepts the shape a
-// student already knows. Only the *shape* is grammar: what a lambda means is
-// Python's, read from the source it spans, which is what keeps this rule from
-// having to grow every time PySpark does.
-?expr: lambda_expr | conditional
-lambda_expr: KW_LAMBDA [lambda_params] ":" expr
-lambda_params: NAME ("," NAME)*
-// The alias belongs on the long alternative alone. Putting it on an optional
-// group aliased *every* expression as a conditional, so `speed=1.0` stopped
-// being a number and ten test suites went red.
-?conditional: or_expr
-            | or_expr KW_IF or_expr KW_ELSE expr -> ifexp
+?expr: or_expr
 ?or_expr: and_expr ("or" and_expr)*
 ?and_expr: comparison ("and" comparison)*
-// A comprehension is how a lambda reshapes a list, and Spark code is full of
-// them. Only the shape is here; what it computes is Python's, read from the
-// source the argument spans.
-comp_for: KW_FOR comp_targets KW_IN or_expr comp_if*
-comp_targets: NAME ("," NAME)*
-comp_if: KW_IF or_expr
-
-?comparison: sum ((COMPARE_OP | KW_IN | KW_NOT_IN) sum)*
+?comparison: sum (COMPARE_OP sum)*
 COMPARE_OP: "==" | "!=" | "<=" | ">=" | "<" | ">"
-KW_NOT_IN.7: /not\s+in\b/
 ?sum: product (SUM_OP product)*
 SUM_OP: "+" | "-"
-?product: unary (MUL_OP unary)*
-// A leading minus. Its absence is why `r[:-1]` — the ordinary way to say
-// "all but the last" — could not be written at all.
-?unary: SUM_OP unary -> unary_op
-      | atom
+?product: atom (MUL_OP atom)*
 MUL_OP: "*" | "/" | "mod"
-?atom: atom "[" expr "]"  -> index
-     | atom "[" [expr] ":" [expr] "]" -> slice_of
-     | atom "." NAME "(" [args] ")" -> remote_call
-     | NUMBER            -> number
+?atom: NUMBER            -> number
      | STRING            -> string
+     | NAME "." NAME "(" [args] ")" -> remote_call
      | NAME "(" [args] ")" -> func_call
      | NAME              -> var
      | "[" [expr ("," expr)*] "]" -> list_lit
-     | "[" expr comp_for "]" -> list_comp
-     | "(" expr "," [expr ("," expr)*] ")" -> tuple_lit
      | "(" expr ")"
 ATOMIC.-1: /[A-Za-z0-9_.\-]+/   // lowest priority: a catch-all payload token
 
@@ -175,8 +148,6 @@ KW_CLOCK.6: /clock\b/
 KW_FOR.6: /for\b/
 KW_IN.6: /in\b/
 KW_IF.6: /if\b/
-KW_ELSE.6: /else\b/
-KW_LAMBDA.6: /lambda\b/
 KW_EMIT.6: /emit\b/
 KW_PROCESS.6: /process\b/
 KW_EVENT.6: /event\b/
@@ -187,11 +158,7 @@ KW_CLASS.6: /class\b/
 KW_PASS.6: /pass\b/
 
 NAME.1: /[a-zA-Z_][a-zA-Z0-9_\-]*/
-// A triple-quoted string carries an embedded sub-language — the PySpark a
-// student writes. Keeping it one token is the whole point: the block is opaque
-// to this grammar, so Python's own parser reads it and nothing about Spark
-// leaks into the rules that MapReduce and the clocks exercises share.
-STRING: /\"\"\".*?\"\"\"/s | /"[^"]*"/
+STRING: /"[^"]*"/
 NUMBER.2: /\d+(\.\d+)?/
 
 _NL: /(\r?\n[\t ]*)+/

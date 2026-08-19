@@ -571,13 +571,14 @@ def lineage(trace: Trace, *, title: str = "", col_gap: float = 3.6,
     # short column does not float in the middle of a tall one.
     ceiling = (tallest - 1) * row_gap / 2
 
-    shapes, placed = [], {}
+    shapes, placed, rows_at = [], {}, {}
     for column, stage in enumerate(stages):
         x = column * col_gap
         for row, e in enumerate(by_stage[stage]):
             y = ceiling - row * row_gap
             name = e.detail.get("name", "")
             placed[name] = (x, y)
+            rows_at[name] = row
             wide = e.detail.get("wide")
             shapes.append(Shape(
                 kind="box", x=x, y=y, w=box_w, h=box_h,
@@ -602,9 +603,15 @@ def lineage(trace: Trace, *, title: str = "", col_gap: float = 3.6,
             x1, y1 = placed[parent]
             if abs(x1 - x2) < 1e-6:
                 # Same stage: nothing moved, so the edge stays in the column.
+                # An edge that skips a row is routed beside the column rather
+                # than through it — drawn straight, it crossed the box in
+                # between and read as an edge to that box instead.
+                skips = abs(rows_at.get(name, 0) - rows_at.get(parent, 0)) > 1
+                rail = x1 - box_w / 2 - 0.35 if skips else x1
                 shapes.append(Shape(
-                    kind="arrow", x=x1, y=y1 - box_h / 2, x2=x2, y2=y2 + box_h / 2,
-                    color="#9AA0A6", meta={"shuffle": False}))
+                    kind="arrow", x=rail, y=y1 - box_h / 2,
+                    x2=rail if skips else x2, y2=y2 + box_h / 2,
+                    color="#9AA0A6", meta={"shuffle": False, "skips": skips}))
             else:
                 shapes.append(Shape(
                     kind="arrow", x=x1 + box_w / 2, y=y1,

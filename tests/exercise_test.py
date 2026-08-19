@@ -115,9 +115,29 @@ tasks = ["a3-vector"]
     ok("the workspace opens on this exercise's tasks only",
        starters == sorted(["a2-wordcount.ds", "a2-telemetry.ds", "a2-kmeans.ds"]),
        ", ".join(starters))
-    ok("data files come regardless of which task reads them",
-       any(not n.endswith(".ds") for n in seeded),
+    ok("a data file ships when one of this exercise's tasks names it",
+       "climate.csv" in seeded and "chunk002.txt" not in seeded,
        ", ".join(sorted(n for n in seeded if not n.endswith(".ds"))))
+
+    # A workspace saved before a rename keeps its tabs, and those tabs are
+    # files a student is invited to work in. Untouched starters go; anything
+    # they might have written stays, whatever it is called.
+    stale = dict(seeded)
+    stale["t3-spark.ds"] = seeded["a2-wordcount.ds"]     # renamed, untouched
+    stale["scratch.ds"] = "def mine(x: int) -> int:\n    return x\n"
+    del stale["a2-kmeans.ds"]                            # a tab they closed
+
+    (spark / ".dsviz").mkdir(exist_ok=True)
+    (spark / ".dsviz" / "workspace.json").write_text(
+        json.dumps({"version": 1, "files": stale}))
+    fresh = cli.load_workspace(spark)
+
+    ok("a renamed task's untouched starter is not kept as a second tab",
+       "t3-spark.ds" not in fresh, ", ".join(sorted(fresh)))
+    ok("a file the student wrote is kept, whatever it is called",
+       fresh.get("scratch.ds") == stale["scratch.ds"])
+    ok("a task this exercise has is opened even if it was not saved",
+       "a2-kmeans.ds" in fresh)
 
 print("ALL EXERCISE TESTS PASSED" if not failures
       else f"{len(failures)} FAILED: {', '.join(failures)}")

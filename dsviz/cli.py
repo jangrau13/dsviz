@@ -60,10 +60,37 @@ def load_workspace(root: pathlib.Path) -> dict:
     store = _store(root)
     if store.exists():
         try:
-            return json.loads(store.read_text()).get("files", {})
+            saved = json.loads(store.read_text()).get("files", {})
+            return _reconcile(root, saved) if isinstance(saved, dict) else seed(root)
         except ValueError:
             pass
     return seed(root)
+
+
+def _reconcile(root: pathlib.Path, saved: dict) -> dict:
+    """
+    Bring a saved workspace up to date with the exercise it belongs to.
+
+    Tasks get renamed and exercises get rescoped, and a workspace saved before
+    either keeps its tabs: a student opens Assignment 1 and finds the six
+    tasks it has plus three from the shape it used to have. Every one of those
+    is a file they are invited to work in and none of them is theirs.
+
+    Two rules, and the second is the important one. A task this exercise now
+    has is added if it is missing. A file this exercise does not have is
+    removed *only* when its text is one the package still ships — that is,
+    when it is a starter nobody has touched. Anything else was written by the
+    student and stays, whatever it is called, because the cost of being wrong
+    in that direction is their work.
+    """
+    shipped = {path.read_text() for path in assets.tasks_dir().glob("*")
+               if path.is_file()} if assets.tasks_dir().is_dir() else set()
+
+    files = {name: text for name, text in saved.items()
+             if name in seed(root) or text not in shipped}
+    for name, text in seed(root).items():
+        files.setdefault(name, text)
+    return files
 
 
 def save_workspace(root: pathlib.Path, files: dict) -> None:

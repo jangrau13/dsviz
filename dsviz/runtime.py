@@ -18,6 +18,8 @@ new decorator gets a diagram for free.
 
 from __future__ import annotations
 
+import json
+
 from .core import Cluster, Event
 from .notation import Diagnostic, NotationError
 from .syntax import LIFECYCLE, MACHINE_SETTINGS, lint
@@ -117,10 +119,15 @@ def evaluate(source: str, *, runs: int = 100) -> dict:
     # random, so a program with no error_rate anywhere replays identically, and
     # running it a hundred times would be a hundred copies of one answer
     # dressed up as evidence.
-    varies = _can_fail(source)
+    # A program also varies when it asks a reducer to do something a reducer
+    # is not allowed to do. Such a job has no single answer — it has one per
+    # way the rows happened to be split — and running it once would report an
+    # accident as a result.
+    varies = _can_fail(source) or _order_sensitive(source)
     wanted = max(1, runs)
 
     samples: dict[str, list] = {}
+    answers: list = []
     failures = 0
     for i in range(wanted if varies else 1):
         try:
@@ -132,8 +139,21 @@ def evaluate(source: str, *, runs: int = 100) -> dict:
             continue
         for name, metric in measure(c.trace).items():
             samples.setdefault(name, []).append(float(metric.value))
+        # The result itself, not only how long it took. A job whose reducer is
+        # order-sensitive has a different *answer* per run, and reporting only
+        # makespan and traffic hid exactly that: a hundred runs looked
+        # identical because the thing that differed was never sampled.
+        answers.append(json.dumps(
+            {e.detail["key"]: e.detail["value"]
+             for e in c.trace.of_kind("output")}, sort_keys=True, default=str))
 
+    distinct = sorted(set(answers))
     return {
+        # How many different results the same program produced. One is what a
+        # student should expect; more than one means the answer depended on
+        # something the program does not control.
+        "answers": len(distinct),
+        "answer_samples": [json.loads(a) for a in distinct[:5]],
         "runs": wanted if varies else 1,
         "asked": wanted,
         "failed": failures,
@@ -157,6 +177,23 @@ def _can_fail(source: str) -> bool:
 
     return any(traits.get("error_rate", 0.0) > 0
                for _, _, traits in declared_machines(source))
+
+
+def _order_sensitive(source: str) -> bool:
+    """Whether a reducer here would answer differently on another partitioning.
+
+    Built once and asked, rather than pattern-matched: `pyspark.build` already
+    re-folds every reducer under a different grouping and a reversed order to
+    decide, so the question is answered by the same code that warns about it.
+    """
+    from .notation import NotationError
+
+    try:
+        cluster = build(source, seed=0)
+    except (NotationError, Exception):
+        return False
+    pipe = getattr(cluster, "pipeline", None)
+    return bool(pipe and pipe.warnings)
 
 
 def _spread(values: list) -> dict:
@@ -617,7 +654,12 @@ def run_pipeline(mod, c: Cluster, job, run) -> bool:
     if not executors:
         return False
 
-    pipe = pyspark.build(mod.rdds, mod.inputs)
+    # The executors are the partitions, and the cluster's own generator says
+    # which records landed together. Seeded, so a run replays; different seeds
+    # are different splits, which is exactly the variation a program must not
+    # depend on.
+    pipe = pyspark.build(mod.rdds, mod.inputs, rng=c.rng,
+                         partitions=len(executors))
     for warning in pipe.warnings:
         # Said out loud on the diagram too, not only in the editor's margin:
         # a reducer that is not associative is a property of the run, and the

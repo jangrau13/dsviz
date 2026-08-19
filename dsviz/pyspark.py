@@ -575,8 +575,25 @@ def _check_associative(fn, groups: dict, order: list, node, line: int,
     return ""
 
 
+def _partition(values: list, parts: int, rng) -> list:
+    """Split a key's values the way a cluster happens to have split them.
+
+    Not a round-robin: which records ended up together is an accident of how
+    the input was read and shuffled, and the whole point is that a program may
+    not depend on it. Seeded, so one run is reproducible while different seeds
+    are different accidents.
+    """
+    if parts <= 1 or len(values) < 2 or rng is None:
+        return [list(values)]
+    buckets: list = [[] for _ in range(min(parts, len(values)))]
+    for value in values:
+        buckets[rng.randrange(len(buckets))].append(value)
+    return [b for b in buckets if b]
+
+
 def _apply(op: str, args: list, data: list, node, line: int,
-           budget: Budget, warnings: list | None = None) -> list:
+           budget: Budget, warnings: list | None = None,
+           rng=None, partitions: int = 1) -> list:
     """Apply one transformation to a list of records."""
     fn = args[0] if args else None
 
@@ -665,10 +682,22 @@ def _apply(op: str, args: list, data: list, node, line: int,
                          "so a reducer has to give the same answer whatever "
                          "the order and grouping. A mean is sum divided by "
                          "count, not a fold of halves."))
+        # Each partition reduces what it holds, then the partial results are
+        # combined — which is what Spark does, and why a reducer that is not
+        # associative and commutative has no single answer. Folding the whole
+        # list left-to-right hid that: the simulator was reproducible where a
+        # cluster is not, so a wrong reducer looked right.
         out = []
         for k in order:
-            acc = collected[k][0]
-            for nxt in collected[k][1:]:
+            partials = []
+            for bucket in _partition(collected[k], partitions, rng):
+                acc = bucket[0]
+                for nxt in bucket[1:]:
+                    budget.spend()
+                    acc = f(acc, nxt)
+                partials.append(acc)
+            acc = partials[0]
+            for nxt in partials[1:]:
                 budget.spend()
                 acc = f(acc, nxt)
             out.append((k, acc))
@@ -883,7 +912,8 @@ def _arg(text: str, line: int, budget: Budget):
     return evaluate(tree.body, {}, line, budget)
 
 
-def build(rdds: list, inputs: dict, *, budget: Budget | None = None) -> Pipeline:
+def build(rdds: list, inputs: dict, *, budget: Budget | None = None,
+          rng=None, partitions: int = 1) -> Pipeline:
     """
     Run the pipeline a program declares, and return what it produced.
 
@@ -978,7 +1008,8 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None) -> Pipeline
                 values = list(values) + list(options.values())
                 data = _apply(op, values, parent.data,
                               _Where(rdd.line), rdd.line, budget,
-                              warnings=pipe.warnings)
+                              warnings=pipe.warnings, rng=rng,
+                              partitions=partitions)
                 sizes = []
                 if op == "partitionBy" and values:
                     counts: dict = {}

@@ -6,15 +6,19 @@
 # position only if its signature fits that position.
 #
 #   the mapper       is called once per document, with that document's
-#                    name and its text, and emits pairs:  emit(word, 1)
+#                    name and its text, and emits a pair for every
+#                    occurrence it finds
 #   the reducer      is called once per key, with every value emitted
 #                    for that key, and returns the result for it
 #   the partitioner  is called with a key and the number of reducers,
 #                    and returns which reducer owns that key. The same
 #                    key must always give the same answer
 #
-# Useful functions: split(text), lower(text), sum(values), hash(key)
-# Press ctrl/cmd + K to search the language reference.
+# What a pair should be, and what "ignoring case" implies about when to
+# normalise, are yours to decide.
+#
+# Press ctrl/cmd + K for the language reference: it lists every function
+# available to you and the shape a job is written in.
 
 # --- the world -------------------------------------------------------
 # The machines that exist, how fast each one is, and how it fails. A

@@ -259,8 +259,9 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
     # passed exactly that, so a submission could keep the machines, drop the
     # job and the `world.run`, and be marked as running without errors.
     if not mod.runs:
+        from .notation_mr import last_line
         raise NotationError([Diagnostic(
-            1, 1, "error",
+            last_line(source), 1, "error",
             "this program never runs anything",
             hint="build a job and run it in the world, e.g. "
                  "job = Calls(run=story) and then world.run(job)")])
@@ -269,7 +270,7 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
         job = next((j for j in mod.jobs if j.var == run.job), None)
         if job is None:
             raise NotationError([Diagnostic(
-                1, 1, "error",
+                run.line, 1, "error",
                 f"world.run({run.job}) was asked for, but there is no job "
                 f"called {run.job!r}",
                 hint=f"jobs defined here: "

@@ -138,6 +138,31 @@ def job_roles(source: str) -> dict:
     mod, _ = from_tree(source)
     return dict(mod.jobs[0].roles) if mod.jobs else {}
 
+
+def job_line(source: str) -> int:
+    """The line the job was declared on, or 0 if there is no job."""
+    from .syntax import from_tree
+
+    mod, _ = from_tree(source)
+    return mod.jobs[0].line if mod.jobs else 0
+
+
+def last_line(source: str) -> int:
+    """
+    Where a line that is missing should have gone.
+
+    A complaint about something absent has no line of its own, and reporting it
+    against line 1 puts the editor's squiggle on the first line of the task
+    description — the one place the student certainly does not need to change.
+    The end of what they wrote is where the missing line belongs.
+    """
+    lines = source.replace("\r\n", "\n").split("\n")
+    for n in range(len(lines), 0, -1):
+        text = lines[n - 1].strip()
+        if text and not text.startswith("#"):
+            return n
+    return 1
+
 RULES_MR = [
     ("mappers",   re.compile(r"^mappers\s+(?P<n>\d+)$", re.I)),
     ("reducers",  re.compile(r"^reducers\s+(?P<n>\d+)$", re.I)),
@@ -339,7 +364,7 @@ def build_mr(source: str, *, seed: int | None = None):
     required = ("map", "reduce", "partition")
     if not roles:
         raise NotationError([Diagnostic(
-            1, 1, "error",
+            last_line(source), 1, "error",
             "this program never says which functions do the work",
             hint="wire them up with e.g. "
                  "job = MapReduce(map=…, reduce=…, partition=…) and then "
@@ -347,20 +372,11 @@ def build_mr(source: str, *, seed: int | None = None):
     missing = [r for r in required if not roles.get(r)]
     if missing:
         raise NotationError([Diagnostic(
-            1, 1, "error",
+            job_line(source) or last_line(source), 1, "error",
             f"the job does not say which function is the "
             f"{', '.join(missing)}",
             hint="every position has to be filled: "
                  "MapReduce(map=…, reduce=…, partition=…)")])
-    unknown = [(r, roles[r]) for r in required if roles[r] not in funcs]
-    if unknown:
-        r, name = unknown[0]
-        raise NotationError([Diagnostic(
-            1, 1, "error",
-            f"the job passes {name!r} as the {r}, but there is no function "
-            f"called {name!r}",
-            hint=f"defined here: {', '.join(sorted(funcs)) or 'nothing'}")])
-
     def bound(role: str):
         """The function passed for this role, if it was passed and parsed."""
         name = roles.get(role)

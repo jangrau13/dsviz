@@ -648,7 +648,14 @@ def check_functions(funcs: dict, mapper: str | None = None) -> list[Diagnostic]:
                 # mapper — not to one that happens to be spelled `map`. When no
                 # job has been wired up yet there is nothing to check against,
                 # so this stays quiet rather than guessing.
-                if mapper is not None and fn.name != mapper:
+                #
+                # It also stays quiet when the job names a mapper that does not
+                # exist. "this job's mapper is typoHere, not perDocument" is
+                # true and useless: the mistake is the typo, and saying so is
+                # another check's job — one that reports it on the line the
+                # name was written rather than here on the emit.
+                if (mapper is not None and fn.name != mapper
+                        and mapper in funcs):
                     described = (SIGNATURES[fn.name][3]
                                  if fn.name in SIGNATURES
                                  else "is not this job's mapper")

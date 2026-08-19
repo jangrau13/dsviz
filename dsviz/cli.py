@@ -366,19 +366,26 @@ def serve(port: int) -> int:
     try:
         server, port = open_server(port, handler)
     except OSError as err:
-        print(f"Could not start the editor: {err}")
+        print(f"Could not start the editor: {err}", flush=True)
         print(f"Port {asked} is serving {whoever_has(asked)}, and the ports "
               f"after it are busy too. Stop one, or pick a port yourself: "
-              f"dsviz serve 9000")
+              f"dsviz serve 9000", flush=True)
         return 1
+    # Flushed as they are written. Python buffers stdout when it is not a
+    # terminal, and the devcontainer runs this with its output redirected — so
+    # the line saying which port the editor ended up on sat in a buffer while
+    # the student looked at an empty log and a page that would not load.
+    def say(line: str) -> None:
+        print(line, flush=True)
+
     if port != asked:
-        print(f"Port {asked} is already serving {whoever_has(asked)}, "
-              f"so this one is on {port} instead.")
-    print(f"Editor on http://localhost:{port}")
-    print(f"  exercise:  {root}")
-    print(f"  workspace: .dsviz/workspace.json  "
-          f"({len(load_workspace(root))} file(s))")
-    print("  hand-ins written to: result/")
+        say(f"Port {asked} is already serving {whoever_has(asked)}, "
+            f"so this one is on {port} instead.")
+    say(f"Editor on http://localhost:{port}")
+    say(f"  exercise:  {root}")
+    say(f"  workspace: .dsviz/workspace.json  "
+        f"({len(load_workspace(root))} file(s))")
+    say("  hand-ins written to: result/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

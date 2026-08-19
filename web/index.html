@@ -38,11 +38,18 @@
                 title="run your code on input you have not seen">hand in</button>
       </div>
     </div>
+    <!-- The task description folds away: it is long on purpose, and a student
+         who has read it once wants the screen back for the code. -->
     <div id="brief" class="brief" hidden></div>
     <div id="nextStep" class="next-step" hidden></div>
     <!-- One tab per file. A task ships the files it needs; `use other` in a
-         file pulls it in, and every file is checked as one program. -->
-    <div id="files" class="files" role="tablist" aria-label="files"></div>
+         file pulls it in, and every file is checked as one program. The
+         comments toggle folds the prose out of the file the same way. -->
+    <div id="fileBar" class="file-bar">
+      <div id="files" class="files" role="tablist" aria-label="files"></div>
+      <button id="comments" class="ghost"
+              title="fold the comment lines out of the code">hide comments</button>
+    </div>
     <div id="editor" class="editor"></div>
     <div id="diagnostics" class="diagnostics"></div>
   </section>
@@ -55,6 +62,8 @@
         <input type="range" id="scrub" min="0" max="1000" value="0">
         <span id="clock" class="clock">0.00s</span>
         <button id="record" title="Record this dataflow as a video file, saved to your downloads">video</button>
+        <button id="expand" class="ghost"
+                title="give the results the whole panel">results ⤢</button>
       </div>
     </div>
     <svg id="stage" preserveAspectRatio="xMidYMid meet"></svg>

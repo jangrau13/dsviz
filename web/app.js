@@ -199,7 +199,13 @@ async function bootMonaco() {
   // Re-apply once Monaco exists: the first call at startup runs before the
   // editor is created and so cannot theme it.
   applyTheme(currentTheme());
-  editor.onDidChangeModelContent(scheduleRun);
+  editor.onDidChangeModelContent(() => { scheduleRun(); applyComments(); });
+  // Leaving a comment line is what lets it fold away again.
+  editor.onDidChangeCursorPosition(applyComments);
+  // A build without the line-hiding API keeps its comments, and says so by
+  // not offering a button that could not do anything.
+  $("comments").hidden = typeof editor.setHiddenAreas !== "function";
+  setComments(commentsHidden);
 }
 
 /*
@@ -278,6 +284,74 @@ function toast(text) {
 // --- analysis -----------------------------------------------------------
 
 let runTimer = null;
+/* --- the comments, folded away -------------------------------------------
+ *
+ * A starter is written to be read: it opens with a paragraph of prose saying
+ * what the three declarations are for. That is the point on the first reading
+ * and in the way on the fourth, so every run of comment lines can be folded
+ * out of the file. Only the view changes — the text is untouched, so what is
+ * saved, run and handed in is the file the student actually has.
+ *
+ * Monaco hides lines through the machinery its own folding uses, keyed by
+ * whoever asked for it. The key below is ours, which is what stops folding a
+ * block by hand and folding the comments from undoing each other.
+ */
+const HIDDEN_BY_COMMENTS = { by: "dsviz.comments" };
+let commentsHidden = localStorage.getItem("dsviz.comments") === "hidden";
+let hiddenNow = "";           // what is hidden now, so nothing re-lays out for nothing
+
+/** Runs of lines that are comment and nothing else. */
+function commentRuns(model) {
+  const blank = (i) => /^\s*$/.test(model.getLineContent(i));
+  const comment = (i) => /^\s*#/.test(model.getLineContent(i));
+  const runs = [];
+  const n = model.getLineCount();
+  for (let i = 1; i <= n; i++) {
+    if (!comment(i)) continue;
+    let end = i;
+    while (end < n && comment(end + 1)) end++;
+    /* A header block is followed by a blank line. Left behind, those blanks
+     * turn a folded file into a column of nothing, so a block that stands on
+     * its own — at the top of the file, or under a blank line — takes its own
+     * blank line with it. A comment sitting against a line of code does not:
+     * there the blank belongs to the code. */
+    if (end < n && blank(end + 1) && (i === 1 || blank(i - 1))) end++;
+    runs.push([i, end]);
+    i = end;
+  }
+  return runs;
+}
+
+function applyComments() {
+  const model = editor && editor.getModel();
+  // Older Monaco builds have no way to hide lines; the button reports that by
+  // not being there at all rather than by doing nothing when pressed.
+  if (!model || typeof editor.setHiddenAreas !== "function") return;
+  // Never the line the cursor is on: a comment must not disappear from under
+  // the student as they type it.
+  const at = editor.getPosition()?.lineNumber ?? 0;
+  const runs = commentsHidden
+    ? commentRuns(model).filter(([a, b]) => at < a || at > b)
+    : [];
+  const key = runs.map((r) => r.join("-")).join(",");
+  if (key === hiddenNow) return;
+  hiddenNow = key;
+  editor.setHiddenAreas(
+    runs.map(([a, b]) => new monacoRef.Range(a, 1, b, model.getLineMaxColumn(b))),
+    HIDDEN_BY_COMMENTS);
+}
+
+function setComments(hidden) {
+  commentsHidden = hidden;
+  localStorage.setItem("dsviz.comments", hidden ? "hidden" : "shown");
+  const b = $("comments");
+  b.textContent = hidden ? "show comments" : "hide comments";
+  b.title = hidden ? "put the comment lines back"
+                   : "fold the comment lines out of the code";
+  b.classList.toggle("on", hidden);
+  applyComments();
+}
+
 /* --- files ---------------------------------------------------------------
  *
  * A task is a set of files, not a single buffer. Each gets its own Monaco
@@ -307,6 +381,9 @@ function showFile(name) {
   if (!model) return;
   activeFile = name;
   editor.setModel(model);
+  // A new model comes with nothing hidden, whatever the last one had.
+  hiddenNow = "";
+  applyComments();
   drawTabs();
 }
 
@@ -314,8 +391,9 @@ function drawTabs() {
   const bar = $("files");
   // Always shown, even for one file: a student editing `a1-wordcount.ds` should
   // be able to see that is what they are editing. With one file there is
-  // nothing to navigate, but there is still something to know.
-  bar.hidden = files.size === 0;
+  // nothing to navigate, but there is still something to know. The row also
+  // carries the comments toggle, so it is the row that goes away with them.
+  $("fileBar").hidden = files.size === 0;
   bar.innerHTML = "";
   for (const name of files.keys()) {
     const tab = document.createElement("button");
@@ -565,12 +643,21 @@ function showDiagnostics(diags) {
       ${d.hint ? `<div class="hint">${escapeHtml(d.hint)}</div>` : ""}
     </div>`).join("");
   box.querySelectorAll(".diag").forEach((el) =>
-    el.addEventListener("click", () => {
-      const line = Number(el.dataset.line);
-      editor.revealLineInCenter(line);
-      editor.setPosition({ lineNumber: line, column: 1 });
-      editor.focus();
-    }));
+    el.addEventListener("click", () => revealProblem(Number(el.dataset.line))));
+}
+
+/* Jumping to a problem has to unfold the comments if that is where it is —
+ * otherwise the click lands on a line that is not on screen and looks as
+ * though nothing happened. */
+function revealProblem(line) {
+  const model = editor?.getModel();
+  if (!model) return;
+  if (commentsHidden && commentRuns(model).some(([a, b]) => line >= a && line <= b)) {
+    setComments(false);
+  }
+  editor.revealLineInCenter(line);
+  editor.setPosition({ lineNumber: line, column: 1 });
+  editor.focus();
 }
 
 function showMetrics(metrics, verdict, outputs) {
@@ -1400,7 +1487,11 @@ function showBrief(a) {
   const el = $("brief");
   if (!a) { el.hidden = true; return; }
   el.hidden = false;
-  el.innerHTML = `<div class="brief-title">${escapeHtml(a.title)}</div>
+  el.innerHTML = `<div class="brief-head">
+      <div class="brief-title">${escapeHtml(a.title)}</div>
+      <button id="briefToggle" class="ghost" aria-expanded="true"></button>
+    </div>
+    <div class="brief-body">
     <div class="brief-text">${escapeHtml(a.brief)}</div>
     ${a.goals && a.goals.length ? `<details class="goals"><summary>What this task is for</summary><ul>${
       a.goals.map((g) => `<li><span class="lvl">${escapeHtml(g.level)}</span>${
@@ -1410,7 +1501,53 @@ function showBrief(a) {
     <div class="criteria">${a.criteria.map((c) =>
       `<span class="crit ${c.kind}${c.hidden ? " hidden-crit" : ""}"
              title="${escapeHtml(c.why || "")}">${escapeHtml(c.text)}</span>`
-    ).join("")}</div>`;
+    ).join("")}</div></div>`;
+  // The brief is rewritten on every task, so the fold is re-applied here
+  // rather than remembered by the element.
+  setBriefFolded(briefFolded);
+}
+
+/* --- the task description, folded away -----------------------------------
+ *
+ * The brief is long because it is teaching, and it is in the way once it has
+ * been read. Folded, the title stays: which task this is remains on screen
+ * even when what it asks for is not. The choice is remembered, so a student
+ * who works folded stays folded across tasks and sessions.
+ */
+let briefFolded = localStorage.getItem("dsviz.brief") === "folded";
+
+function setBriefFolded(folded) {
+  briefFolded = folded;
+  localStorage.setItem("dsviz.brief", folded ? "folded" : "open");
+  $("brief").classList.toggle("collapsed", folded);
+  const b = document.getElementById("briefToggle");
+  if (!b) return;
+  b.textContent = folded ? "show task" : "hide task";
+  b.title = folded ? "read the task again" : "fold the task description away";
+  b.setAttribute("aria-expanded", String(!folded));
+  b.classList.toggle("on", folded);
+}
+
+/* --- the results, given the whole panel ----------------------------------
+ *
+ * A run that fails several cases has more to say than a strip at the bottom
+ * of the panel can hold. Rather than shrink the verdict, the diagram steps
+ * aside: the numbers and the failures get the height, and one press puts the
+ * dataflow back.
+ */
+let resultsFull = localStorage.getItem("dsviz.results") === "full";
+
+function setResultsFull(full) {
+  resultsFull = full;
+  localStorage.setItem("dsviz.results", full ? "full" : "auto");
+  document.querySelector(".view-pane").classList.toggle("results-full", full);
+  const b = $("expand");
+  b.textContent = full ? "diagram ⤡" : "results ⤢";
+  b.title = full ? "show the dataflow again" : "give the results the whole panel";
+  b.classList.toggle("on", full);
+  // The frame is cut to the panel's shape, so a panel that has just changed
+  // shape has to be re-cut.
+  if (frame && !playing) draw();
 }
 
 function showSetup(a) {
@@ -1439,6 +1576,7 @@ function onReady(fn) {
 
 onReady(() => {
   applyTheme(currentTheme());
+  setResultsFull(resultsFull);
 
   /* The remaining one-gesture routes out of the page: the browser context
    * menu, and select-all outside the editor. Closing them means the cheapest
@@ -1457,14 +1595,28 @@ onReady(() => {
     }
   });
   $("examples").addEventListener("change", (e) => chooseItem(e.target.value));
-  $("play").addEventListener("click", () =>
-    playing ? pause() : play(clock >= (frame?.duration ?? 0)));
+  $("play").addEventListener("click", () => {
+    // Playing a diagram that is folded away shows nothing; bring it back.
+    if (resultsFull) setResultsFull(false);
+    playing ? pause() : play(clock >= (frame?.duration ?? 0));
+  });
   $("scrub").addEventListener("input", (e) => {
     pause();
     clock = (e.target.value / 1000) * (frame?.duration ?? 0);
     draw();
   });
-  $("record").addEventListener("click", recordVideo);
+  $("record").addEventListener("click", () => {
+    // Recording frames a panel that has to be on screen to be framed.
+    if (resultsFull) setResultsFull(false);
+    recordVideo();
+  });
+  $("comments").addEventListener("click", () => setComments(!commentsHidden));
+  $("expand").addEventListener("click", () => setResultsFull(!resultsFull));
+  // The brief is redrawn on every task, so its button is caught on the way up
+  // rather than bound to an element that is about to be replaced.
+  $("brief").addEventListener("click", (e) => {
+    if (e.target.closest("#briefToggle")) setBriefFolded(!briefFolded);
+  });
   // The frame is cut to the panel's shape, so a window that changes shape has
   // to re-cut it — otherwise the diagram keeps the proportions of a panel that
   // is no longer there.

@@ -108,6 +108,79 @@ const setupBody = $("setupBody"), sBefore = setupBody.hidden;
 click($("setupToggle"));
 ok("setup section toggles", setupBody.hidden !== sBefore);
 
+// --- what is on screen, and what folds away ------------------------------
+/*
+ * Two panels are read and then in the way: the task description above the
+ * code, and the prose inside the file. Both fold, and the results panel takes
+ * the whole right-hand side when a run has more to say than a strip can hold.
+ * Monaco cannot run headless, so the line-hiding itself is out of scope —
+ * which lines it would hide is not, and that is the part with a rule in it.
+ */
+window.showBrief({
+  title: "Getting started 1", brief: "a world of machines", criteria: [],
+});
+const brief = $("brief"), toggle = $("briefToggle");
+ok("the brief renders a fold button", toggle !== null);
+ok("the brief starts open", !brief.classList.contains("collapsed"));
+click(toggle);
+ok("the brief folds", brief.classList.contains("collapsed"));
+ok("folding the brief hides the description", !shown(doc.querySelector(".brief-body")),
+   "the body is what folds away");
+ok("folding the brief keeps the title", shown(doc.querySelector(".brief-title")),
+   "which task this is has to stay on screen");
+ok("the fold is remembered", window.localStorage.getItem("dsviz.brief") === "folded");
+ok("the button says how to get it back", /show/i.test(toggle.textContent));
+click(toggle);
+ok("the brief unfolds", !brief.classList.contains("collapsed"));
+// A new task redraws the brief; the fold must survive that redraw.
+click(toggle);
+window.showBrief({ title: "Getting started 2", brief: "…", criteria: [] });
+ok("a new task keeps the fold", $("brief").classList.contains("collapsed"));
+click($("briefToggle"));
+
+const view = doc.querySelector(".view-pane");
+ok("the results start beside the diagram", !view.classList.contains("results-full"));
+click($("expand"));
+ok("the results can take the whole panel", view.classList.contains("results-full"));
+ok("the expanded panel is remembered",
+   window.localStorage.getItem("dsviz.results") === "full");
+ok("the button offers the diagram back", /diagram/i.test($("expand").textContent));
+// Playing an animation that is not on screen shows nothing, so it comes back.
+click($("play"));
+ok("pressing play brings the diagram back", !view.classList.contains("results-full"));
+
+const comments = $("comments");
+ok("the comments toggle exists", comments !== null);
+click(comments);
+ok("hiding comments is remembered",
+   window.localStorage.getItem("dsviz.comments") === "hidden");
+ok("the button offers them back", /show/i.test(comments.textContent));
+click(comments);
+ok("showing comments is remembered",
+   window.localStorage.getItem("dsviz.comments") === "shown");
+
+/* Which lines fold away. A header block owns the blank line under it — left
+ * behind, folding turns the top of a file into a column of nothing — while a
+ * comment sitting against code does not, because there the blank belongs to
+ * the code below it. */
+const model = (text) => {
+  const lines = text.split("\n");
+  return {
+    getLineCount: () => lines.length,
+    getLineContent: (i) => lines[i - 1],
+    getLineMaxColumn: (i) => lines[i - 1].length + 1,
+  };
+};
+const runs = (text) => JSON.stringify(window.commentRuns(model(text)));
+ok("a header block takes its blank line with it",
+   runs("# one\n# two\n\n@machine") === "[[1,3]]", runs("# one\n# two\n\n@machine"));
+ok("a comment against code leaves the blank alone",
+   runs("x = 1\n# why\n\ny = 2") === "[[2,2]]", runs("x = 1\n# why\n\ny = 2"));
+ok("code with no comments folds nothing",
+   runs("x = 1\n\ny = 2") === "[]", runs("x = 1\n\ny = 2"));
+ok("a comment after code on the same line is code",
+   runs("x = 1  # why") === "[]", runs("x = 1  # why"));
+
 // --- every id the script reaches for must exist --------------------------
 // A renamed id is invisible until the control is pressed; this catches it at
 // the point the rename happens instead.

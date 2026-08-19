@@ -87,11 +87,22 @@ main {
    in them — which was too little for a verdict plus a row of metric tiles, so
    the line saying whether the run passed was clipped in half, while the
    diagram sat above it with empty space to spare. Sizing the results to their
-   content and capping them puts the slack where it belongs. */
+   content and capping them puts the slack where it belongs.
+
+   `minmax(0, 1fr)` on the diagram row is what lets that work: a bare `1fr`
+   refuses to shrink below the content it holds, so the auto row underneath it
+   was squeezed and the results were clipped again — this time from below. */
 .view-pane {
-  display: grid; grid-template-rows: auto 1fr auto;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
 }
+
+/* The results, given the whole panel. For a run with many failed cases, or a
+   projector at the back of the room: the diagram steps aside rather than the
+   verdict scrolling. */
+.view-pane.results-full { grid-template-rows: auto 0 minmax(0, 1fr); }
+.view-pane.results-full #stage { display: none; }
+.view-pane.results-full .results { max-height: none; }
 
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .editor-pane { border-right: 1px solid var(--line); }
@@ -116,6 +127,17 @@ button:hover, select:hover { border-color: var(--accent); }
 .brief {
   padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--line);
   background: var(--panel); flex: 0 0 auto;
+  /* Long tasks must not push the editor off the screen even when open. */
+  max-height: 40vh; overflow-y: auto;
+}
+/* Folded, the task keeps its title: a student who has read the brief still
+   needs to see which task they are looking at. Everything under the title is
+   what goes away, and the choice is remembered between sessions. */
+#brief.collapsed { overflow: visible; }
+#brief.collapsed .brief-body { display: none; }
+.brief-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 0.5rem;
 }
 .brief-title { font-weight: 600; font-size: 0.82rem; }
 .brief-text { color: var(--muted); font-size: 0.76rem; margin-top: 0.15rem; }
@@ -161,19 +183,25 @@ button:hover, select:hover { border-color: var(--accent); }
    for it scrolled away behind the metric tiles — exactly when they mattered. */
 .results {
   border-top: 1px solid var(--line); min-height: 0;
-  /* A run with many failed cases must not push the diagram off the page. */
-  max-height: 45%;
-  display: flex; flex-direction: column;
+  /* A run with many failed cases must not push the diagram off the page.
+     In viewport units rather than per cent: a percentage here is measured
+     against a grid row that is itself sized by this box, which browsers
+     resolve differently and which is how a one-line verdict came to be shown
+     as half a line. `vh` is definite whatever the row does. */
+  max-height: 40vh;
+  /* One scroller for the whole panel. Two nested ones — a capped verdict
+     inside a capped results box — meant the verdict could be cut in half with
+     no scrollbar of its own to reach the rest of it. */
+  overflow-y: auto; overscroll-behavior: contain;
 }
 .verdict {
-  flex: 0 0 auto; padding: 0.5rem 0.7rem 0.35rem;
-  max-height: 45%; overflow-y: auto;
+  /* Pinned, not fixed in place by a max-height: it stays at the top of the
+     panel however far the numbers below it are scrolled. */
+  position: sticky; top: 0; z-index: 1; background: var(--bg);
+  padding: 0.5rem 0.7rem 0.35rem;
 }
 .verdict:empty { display: none; }
-.metrics {
-  flex: 1; padding: 0.35rem 0.7rem 0.5rem;
-  overflow-y: auto; min-height: 0;
-}
+.metrics { padding: 0.35rem 0.7rem 0.5rem; }
 .metric-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .metric {
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
@@ -183,7 +211,7 @@ button:hover, select:hover { border-color: var(--accent); }
 .mvalue { font-family: ui-monospace, Menlo, monospace; font-size: 0.9rem; }
 .mvalue .unit { font-size: 0.62rem; color: var(--muted); margin-left: 0.12rem; }
 
-.verdict { font-size: 0.78rem; margin-bottom: 0.4rem; font-family: ui-monospace, Menlo, monospace; }
+.verdict { font-size: 0.78rem; font-family: ui-monospace, Menlo, monospace; }
 .verdict.AC { color: var(--ok); }
 .verdict.WA, .verdict.CE, .verdict.RE, .verdict.TLE { color: var(--bad); }
 .verdict .case { color: var(--muted); font-size: 0.72rem; margin-top: 0.12rem; }
@@ -230,6 +258,14 @@ button.icon {
   border: 0; background: transparent; font-size: 1.05rem; line-height: 1;
   padding: 0.15rem 0.35rem; color: var(--text);
 }
+/* Toggles that only change what is on screen — nothing is saved, run or sent
+   by pressing one — so they are drawn quietly and lit when they are on. */
+button.ghost {
+  border: 0; background: transparent; color: var(--muted);
+  font-size: 0.7rem; white-space: nowrap; padding: 0.2rem 0.35rem;
+}
+button.ghost:hover { color: var(--accent); }
+button.ghost.on { color: var(--accent); }
 button.icon:hover { color: var(--accent); }
 
 /* --- docs --- */
@@ -415,10 +451,14 @@ button.icon:hover { color: var(--accent); }
 /* --- file tabs --- */
 /* A task is a set of files. The bar hides itself when there is only one, so a
    single-file task looks exactly as it did. */
+.file-bar {
+  display: flex; align-items: center; gap: 0.5rem; padding-right: 0.5rem;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+  flex: 0 0 auto;
+}
 .files {
   display: flex; gap: 2px; padding: 0 0.5rem;
-  border-bottom: 1px solid var(--line); background: var(--panel);
-  overflow-x: auto; flex: 0 0 auto;
+  overflow-x: auto; flex: 1 1 auto; min-width: 0;
 }
 .file-tab {
   background: none; border: none; border-bottom: 2px solid transparent;

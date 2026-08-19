@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import html
 import json
 import os
 import pathlib
@@ -220,6 +221,9 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             self._send_page()
             return
+        if self.path.split("?")[0].rstrip("/") == "/docs":
+            self._send_docs()
+            return
         served = self._from_package()
         if served is not None:
             self._send_file(served)
@@ -276,6 +280,81 @@ class Handler(SimpleHTTPRequestHandler):
             page = page.replace('<meta name="dsviz-repo" content="">',
                                 f'<meta name="dsviz-repo" content="{slug}">', 1)
         body = page.encode()
+        self.send_response(200)
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_docs(self) -> None:
+        """
+        The language reference, as a page of its own.
+
+        The editor links to `docs/` from two places, and until now that was a
+        directory of built HTML which the old vendoring server copied in beside
+        the page. That server is gone, the built site is a gitignored artefact
+        that cannot ride inside a wheel, and there is no Pages deployment — so
+        both links 404'd.
+
+        Rendered here instead, from `langserver.reference()`: the same table
+        the panel and the search read. A generated page cannot fall behind the
+        tool the way a built one can, and it needs no mkdocs on the machine.
+        """
+        from .langserver import reference
+
+        data = json.loads(reference())
+        out = [
+            "<!doctype html><meta charset=utf-8>",
+            "<title>dsviz — the language</title>",
+            "<meta name=viewport content='width=device-width,initial-scale=1'>",
+            "<style>",
+            ":root{color-scheme:light dark}",
+            "body{margin:0 auto;padding:2rem 1.25rem 6rem;max-width:46rem;",
+            " font:16px/1.6 ui-sans-serif,system-ui,sans-serif}",
+            "h1{font-size:1.6rem;margin:0 0 .25rem}",
+            "h2{font-size:1.15rem;margin:2.5rem 0 .25rem;",
+            " border-bottom:1px solid color-mix(in srgb,currentColor 20%,transparent);",
+            " padding-bottom:.3rem}",
+            "h3{font-size:1rem;margin:1.5rem 0 .2rem;font-family:ui-monospace,monospace}",
+            "p{margin:.35rem 0}",
+            ".note,.sum{opacity:.75}",
+            "pre{overflow-x:auto;padding:.7rem .9rem;border-radius:6px;",
+            " background:color-mix(in srgb,currentColor 8%,transparent)}",
+            "code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}",
+            "table{border-collapse:collapse;width:100%;margin:.6rem 0}",
+            "td{padding:.25rem .5rem;vertical-align:top;",
+            " border-top:1px solid color-mix(in srgb,currentColor 15%,transparent)}",
+            "</style>",
+            "<h1>dsviz — the language</h1>",
+            "<p class=note>Generated from the same table the editor reads for "
+            "hovers, completions and <code>ctrl/cmd + K</code>, so it cannot "
+            "drift from what the tool says.</p>",
+        ]
+        for group in data.get("groups", []):
+            out.append(f"<h2>{html.escape(group['title'])}</h2>")
+            if group.get("note"):
+                out.append(f"<p class=note>{html.escape(group['note'])}</p>")
+            for item in group.get("items", []):
+                out.append(f"<h3>{html.escape(item.get('signature') or item['name'])}</h3>")
+                for key in ("summary", "detail"):
+                    if item.get(key):
+                        out.append(f"<p>{html.escape(item[key])}</p>")
+                if item.get("example"):
+                    out.append(f"<pre><code>{html.escape(item['example'])}</code></pre>")
+        # `builtins` is {name: "signature — summary"}, the one line the search
+        # shows for each. Split on the dash so the table has two columns.
+        builtins = data.get("builtins") or {}
+        if builtins:
+            out.append("<h2>Built-in functions</h2>")
+            out.append("<p class=note>Deliberately general: anything "
+                       "problem-shaped is a function you write.</p><table>")
+            for name in sorted(builtins):
+                sig, _, summary = str(builtins[name]).partition(" — ")
+                out.append(f"<tr><td><code>{html.escape(sig)}</code></td>"
+                           f"<td>{html.escape(summary)}</td></tr>")
+            out.append("</table>")
+
+        body = "\n".join(out).encode()
         self.send_response(200)
         self.send_header("content-type", "text/html; charset=utf-8")
         self.send_header("content-length", str(len(body)))

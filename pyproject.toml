@@ -1,0 +1,52 @@
+[project]
+name = "dsviz"
+version = "0.1.0"
+description = "One DSL for the Decentralized Systems course: MapReduce, Spark, vector clocks"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Jan Grau" }]
+keywords = ["teaching", "distributed-systems", "mapreduce", "spark", "simulation"]
+
+# Pure Python, every one of them, because the same versions have to install
+# under Pyodide in the browser as well as in a student's virtualenv.
+dependencies = [
+    "simpy>=4.1",
+    "networkx>=3.0",
+    "lark>=1.1",
+]
+
+[project.optional-dependencies]
+# Only the lecturer renders video; a student never installs manim.
+render = ["manim>=0.18"]
+
+[project.scripts]
+dsviz = "dsviz.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jangrau13/dsviz"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dsviz"]
+
+# The tasks and the editor live beside the package in this repository, because
+# that is where they are authored and tested. A wheel has no repository around
+# it, so they are copied inside the package instead and `dsviz.assets` looks
+# for them in both places. The `web/dsviz` symlink is deliberately not listed:
+# the server serves those modules out of the installed package, so a copy of
+# them in the wheel would be a second one that could fall behind.
+[tool.hatch.build.targets.wheel.force-include]
+"tasks" = "dsviz/_tasks"
+"web/index.html" = "dsviz/_web/index.html"
+"web/app.js" = "dsviz/_web/app.js"
+"web/style.css" = "dsviz/_web/style.css"
+"web/lang.js" = "dsviz/_web/lang.js"
+"web/examples.js" = "dsviz/_web/examples.js"
+
+[tool.hatch.build.targets.sdist]
+include = ["dsviz", "tasks", "web", "tests", "README.md", "pyproject.toml"]
+exclude = ["web/dsviz"]

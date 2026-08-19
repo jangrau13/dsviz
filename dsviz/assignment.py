@@ -13,15 +13,18 @@ served to the browser, and be reused by the grader without duplication.
 from __future__ import annotations
 
 import json
-import pathlib
 from dataclasses import dataclass, field
+
+from . import assets
 
 from .contest import CaseResult, Submission, Verdict
 from .metrics import measure
 from .notation_mr import BUDGET_METRICS
 
 
-TASKS = pathlib.Path(__file__).resolve().parent.parent / "tasks"
+# Resolved rather than hard-coded: installed from git the tasks ride inside
+# the package, in this checkout they sit beside it. See `assets`.
+TASKS = assets.tasks_dir()
 
 
 def starter_for(name: str) -> str:

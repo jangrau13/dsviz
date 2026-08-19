@@ -233,7 +233,16 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
     processes = [i.var for i, k in built if k.kind == "process"]
     wanted = next((str(j.settings["clock"]) for j in mod.jobs
                    if j.settings.get("clock")), "vector")
-    clocks = LamportClocks(processes) if wanted == "lamport" else Clocks(processes)
+    # A job asking for causal delivery is asking for delivery to be a decision
+    # rather than something that just happens on arrival.
+    causal = any(str(j.settings.get("delivery", "")) == "causal"
+                 for j in mod.jobs)
+    if causal:
+        clocks = CausalClocks(processes)
+    elif wanted == "lamport":
+        clocks = LamportClocks(processes)
+    else:
+        clocks = Clocks(processes)
 
     for inst, cls in built:
         for method in sorted(cls.methods.values(), key=lambda m: m.line):
@@ -277,6 +286,8 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
             env: dict = {}
             for call in fn.calls:
                 _perform(c, job.var, call, clocks, env)
+    if hasattr(clocks, "flush"):
+        clocks.flush(c)
     return c
 
 
@@ -295,11 +306,61 @@ class Clocks:
     def __init__(self, names: list[str]):
         self.names = names
         self.at = {n: [0] * len(names) for n in names}
+        self.late: list[tuple] = []        # copies still on the wire
 
     def __bool__(self) -> bool:
         return bool(self.names)
 
-    def send(self, c: Cluster, frm: str, to: str, label: str) -> None:
+    def flush(self, c: Cluster) -> None:
+        """
+        Deliver the copies that were held up, in the order they turn up.
+
+        Nothing decides anything here — that is the point. A late message is
+        shown when it arrives, however out of order that makes the
+        conversation look, and seeing that is what motivates a delivery rule.
+        """
+        for to, frm, label, stamp in self.late:
+            merged = [max(a, b) for a, b in zip(self.at[to], stamp)]
+            merged[self.names.index(to)] += 1
+            self.at[to] = merged
+            c._emit(c.machines[to].clock, "clock", to,
+                    clock=list(merged), label=f"recv {label} (late)")
+        self.late.clear()
+
+    def broadcast(self, c: Cluster, frm: str, label: str,
+                  late: str = "") -> None:
+        """
+        One message to everyone else: one send, one stamp, many receipts.
+
+        Sending to each recipient in turn would advance the sender's own entry
+        once per recipient, which says three messages were sent where one was.
+
+        `late` still delays the copy, and with no rule to hold it back the
+        conversation is simply shown out of order. That is the picture the
+        delivery rule exists to fix, so it has to be possible to see it.
+        """
+        if frm not in self.at:
+            return
+        self.at[frm][self.names.index(frm)] += 1
+        stamp = list(self.at[frm])
+        c._emit(c.machines[frm].clock, "clock", frm, clock=stamp, label=label)
+        for to in self.names:
+            if to == frm:
+                continue
+            if to == late:
+                self.late.append((to, frm, label, stamp))
+                continue
+            merged = [max(a, b) for a, b in zip(self.at[to], stamp)]
+            merged[self.names.index(to)] += 1
+            self.at[to] = merged
+            c._emit(c.machines[to].clock, "clock", to,
+                    clock=list(merged), label=f"recv {label}")
+
+    def send(self, c: Cluster, frm: str, to: str, label: str,
+             delay: float = 0) -> None:
+        # `delay` reorders arrivals, which only matters once delivery is a
+        # decision. Here every message is delivered on arrival, so it is
+        # accepted and ignored rather than being an error to write.
         if frm not in self.at or to not in self.at:
             return
         self.at[frm][self.names.index(frm)] += 1
@@ -335,7 +396,23 @@ class LamportClocks:
     def __bool__(self) -> bool:
         return bool(self.names)
 
-    def send(self, c: Cluster, frm: str, to: str, label: str) -> None:
+    def broadcast(self, c: Cluster, frm: str, label: str,
+                  late: str = "") -> None:
+        """One send, one counter, and everyone else takes the larger."""
+        if frm not in self.at:
+            return
+        self.at[frm] += 1
+        stamp = self.at[frm]
+        c._emit(c.machines[frm].clock, "clock", frm, clock=stamp, label=label)
+        for to in self.names:
+            if to == frm:
+                continue
+            self.at[to] = max(self.at[to], stamp) + 1
+            c._emit(c.machines[to].clock, "clock", to,
+                    clock=self.at[to], label=f"recv {label}")
+
+    def send(self, c: Cluster, frm: str, to: str, label: str,
+             delay: float = 0) -> None:
         if frm not in self.at or to not in self.at:
             return
         self.at[frm] += 1
@@ -345,6 +422,143 @@ class LamportClocks:
         self.at[to] = max(self.at[to], stamp) + 1
         c._emit(c.machines[to].clock, "clock", to,
                 clock=self.at[to], label=f"recv {label}")
+
+
+class CausalClocks(Clocks):
+    """
+    Vector clocks, plus the decision of whether a message may be delivered yet.
+
+    The clock alone says what is ordered. It does not say what to *do* about a
+    message that arrives before something it depends on — that is a separate
+    rule, and here the student writes it:
+
+        job = Calls(run=story, delivery="causal")
+
+    The rule is the standard one. A message from p_j carrying stamp V is
+    delivered at p_i only when
+
+        V[j] == V_i[j] + 1        it is the very next one p_j sent to me
+        V[k] <= V_i[k]  for k≠j   and I have already seen everything p_j had
+                                  seen when it sent
+
+    A message the rule refuses is held, not dropped. Every time something is
+    delivered the held ones are offered again, because a delivery is exactly
+    the event that can make a buffered message deliverable. That loop is the
+    whole mechanism.
+
+    Arrival order is not send order: a message with a `delay` overtakes one
+    sent before it. Without that there would be nothing to buffer and a rule
+    that always returned true would look correct.
+    """
+
+    def __init__(self, names: list[str]):
+        super().__init__(names)
+        self.waiting: list[dict] = []      # arrived, not yet delivered
+        self.clock_at = 0                  # how many sends have happened
+
+    # How far behind a late copy arrives. Large enough that the messages sent
+    # after it get there first, which is the whole scenario.
+    LATE_BY = 10
+
+    def broadcast(self, c: Cluster, frm: str, label: str,
+                  late: str = "") -> None:
+        """
+        One send, one stamp, and a copy on its way to every other process.
+
+        The stamp is taken once. Every recipient is looking at the same
+        message, so a per-recipient stamp would make "the next message p_j
+        sent" mean something different at each of them.
+        """
+        if frm not in self.at:
+            return
+        self.clock_at += 1
+        self.at[frm][self.names.index(frm)] += 1
+        stamp = list(self.at[frm])
+        c._emit(c.machines[frm].clock, "clock", frm, clock=stamp, label=label)
+
+        for name in self.names:
+            if name == frm:
+                continue
+            self.waiting.append({
+                "to": name, "frm": frm, "label": label, "stamp": stamp,
+                "arrives": self.clock_at + (self.LATE_BY if name == late else 0),
+            })
+        self._drain(c)
+
+    def send(self, c: Cluster, frm: str, to: str, label: str,
+             delay: float = 0) -> None:
+        """
+        A message to one process.
+
+        The delivery rule is stated for broadcast, so a point-to-point message
+        under it would be held forever waiting for copies that were never sent.
+        This says so rather than letting the diagram fill with messages nobody
+        can explain.
+        """
+        c.note(f"{frm} sent {label!r} to {to} alone, but this job asks for "
+               f"causal delivery, which is defined over broadcast. Use "
+               f"{frm}.broadcast({label!r}) instead.")
+
+    def _deliverable(self, msg) -> bool:
+        """Whether this message's dependencies have all been delivered here."""
+        mine = self.at[msg["to"]]
+        sender = self.names.index(msg["frm"])
+        stamp = msg["stamp"]
+        if stamp[sender] != mine[sender] + 1:
+            return False
+        return all(stamp[k] <= mine[k]
+                   for k in range(len(mine)) if k != sender)
+
+    def _drain(self, c: Cluster) -> None:
+        """Deliver whatever the rule now allows, then ask again."""
+        progress = True
+        while progress:
+            progress = False
+            for msg in sorted(self.waiting, key=lambda m: m["arrives"]):
+                if msg["arrives"] > self.clock_at:
+                    continue                       # has not got there yet
+                if not self._deliverable(msg):
+                    # Said once, when it first arrives and cannot be taken.
+                    # This is the event the exercise is about: the message is
+                    # here, it is readable, and it is deliberately not shown
+                    # yet because showing it would put it out of order.
+                    if not msg.get("held"):
+                        msg["held"] = True
+                        c.note(f"{msg['to']} is holding {msg['label']!r} from "
+                               f"{msg['frm']} — it arrived before something "
+                               f"it depends on")
+                    continue
+                self.waiting.remove(msg)
+                to = msg["to"]
+                # No increment of the receiver's own entry. Under causal
+                # broadcast a counter records how many messages that process
+                # has *sent*, and delivering someone else's message is not
+                # one of them. Incrementing here made a process's own entry
+                # run ahead of what it had sent, and the next broadcast then
+                # looked like it had skipped one.
+                merged = [max(a, b)
+                          for a, b in zip(self.at[to], msg["stamp"])]
+                self.at[to] = merged
+                c._emit(c.machines[to].clock, "clock", to,
+                        clock=list(merged), label=f"deliver {msg['label']}")
+                progress = True
+                break
+
+    def flush(self, c: Cluster) -> None:
+        """
+        Let the late copies land, then say what is still being held.
+
+        The run ends when the last line does, but a message that was delayed
+        is still on its way. Without letting it arrive, a correctly buffered
+        message would be reported as stuck forever — which is the opposite of
+        what the exercise is showing.
+        """
+        if self.waiting:
+            self.clock_at = max(m["arrives"] for m in self.waiting)
+            self._drain(c)
+        for msg in sorted(self.waiting, key=lambda m: m["arrives"]):
+            c.note(f"{msg['to']} is still holding {msg['label']!r} from "
+                   f"{msg['frm']} — nothing arrived that would release it")
 
 
 def run_pipeline(mod, c: Cluster, job, run) -> bool:
@@ -463,7 +677,23 @@ def _perform(c: Cluster, caller: str, call, clocks=None, env=None) -> None:
         label = str(call.args[1]) if len(call.args) > 1 else "message"
         target.send(receiver, label)
         if clocks:
-            clocks.send(c, call.target, str(call.args[0]), label)
+            # `delay` is what lets a message overtake one sent before it.
+            # Without it every arrival is in send order and there is never
+            # anything to buffer, so the rule would never be exercised.
+            clocks.send(c, call.target, str(call.args[0]), label,
+                        delay=float(call.options.get("delay", 0)))
+        return
+
+    # `p1.broadcast("hello")` — one message to everyone else, which is what
+    # the chat is: the server relays each line to every client. The causal
+    # delivery rule is stated for broadcast and means nothing without it —
+    # "the next message p_j sent" is only well defined if p_j sends to all.
+    if call.method == "broadcast" and call.args:
+        label = str(call.args[0])
+        late = call.options.get("late")
+        if clocks:
+            clocks.broadcast(c, call.target, label,
+                             late=str(late) if late is not None else "")
         return
 
     if call.method in LIFECYCLE:

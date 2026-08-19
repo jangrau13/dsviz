@@ -584,10 +584,29 @@ LAMPORT = Assignment(
     dialect="rpc",
 )
 
+BUFFERING = Assignment(
+    name="t9-buffering",
+    title="Task 2.2: delivering messages in order",
+    goals=["causality"],
+    brief="A vector clock says which messages depend on which. It does not "
+          "stop one being shown before the message it answers — that takes a "
+          "delivery rule, and holding what the rule refuses.",
+    steps=[
+        "Run it with the rule off, and read the line where a reply is shown "
+        "before the message it answers.",
+        "Switch the rule on. Note which message is held, and what released "
+        "it.",
+        "Make a process slow, and confirm the delivery order does not move.",
+        "Add a message, choose who is late, and predict what is held before "
+        "you run it.",
+    ],
+    dialect="rpc",
+)
+
 ASSIGNMENTS = {a.name: a for a in (
     RPC_BASICS, WORD_COUNT, COMBINER, MR_OVER_RPC,
     SPARK_MEMORY, TELEMETRY, KMEANS,
-    LAMPORT, CLOCKS)}
+    LAMPORT, CLOCKS, BUFFERING)}
 
 
 def load_holdout(path: str | None = None) -> bool:

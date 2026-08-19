@@ -465,9 +465,16 @@ async function run() {
   }
   frame = result.frame;
   showMetrics(result.metrics, result.verdict, result.outputs);
-  clock = 0;
+
+  // The finished run, drawn still. This used to animate itself on every
+  // check, which is every 300ms while a student is typing — so the diagram
+  // was permanently in motion, restarting from empty each time, and the one
+  // moment worth looking at went past while they were still mid-line.
+  // Parking at the end shows what happened; the play button replays it, and
+  // already knows to start over when the clock is at the end.
+  pause();
+  clock = frame.duration + 0.8;
   draw();
-  play(true);
 }
 
 /*

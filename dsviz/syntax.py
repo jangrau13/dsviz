@@ -655,6 +655,12 @@ RDD_SOURCES = ("textFile", "parallelize")
 # on the machine — `MapServer.crash()` — so there is no statement form to learn.
 LIFECYCLE = ("crash", "restart")
 
+# Calls the runtime answers on any machine's behalf, so a class does not have
+# to declare them. `crash` and `restart` act on a machine; `send` and
+# `broadcast` are how processes talk. None of them is a method a student
+# writes, so none may be reported as one the class fails to answer.
+BUILTIN_CALLS = (*LIFECYCLE, "send", "broadcast")
+
 
 def check_calls(mod: Module) -> list[Diagnostic]:
     """
@@ -667,41 +673,52 @@ def check_calls(mod: Module) -> list[Diagnostic]:
     the runtime; it does not change what a call *is*.
     """
     diags: list[Diagnostic] = []
-    for cls in mod.classes.values():
-        for method in cls.methods.values():
-            for call in method.calls:
-                # A call names a machine that exists — an instance — not the
-                # class it is an instance of. `Worker.run()` is a category
-                # error: there may be three Workers, and the call has to say
-                # which one it is talking to.
-                instance = mod.instances.get(call.target)
-                if instance is None:
-                    if call.target in mod.classes:
-                        made = [i.var for i in mod.instances.values()
-                                if i.cls == call.target]
-                        diags.append(Diagnostic(
-                            call.line, 1, "error",
-                            f"{call.target} is a kind of machine, not one you "
-                            f"can call",
-                            hint=(f"call one of: {', '.join(made)}" if made else
-                                  f"make one first, e.g. "
-                                  f"server = {call.target}()")))
-                    else:
-                        known = ", ".join(mod.instances) or "none yet"
-                        diags.append(Diagnostic(
-                            call.line, 1, "error",
-                            f"there is no machine called {call.target!r}",
-                            hint=f"machines in this program: {known}"))
-                    continue
 
-                target = mod.classes.get(instance.cls)
-                if (target is not None and call.method not in LIFECYCLE
-                        and call.method not in target.methods):
-                    answers = ", ".join(target.methods) or "nothing yet"
+    # Every function that can contain a call, not only the methods. A job's
+    # work is an ordinary function — `def story()` — and it was not looked at,
+    # so `bank.balance(...)` against a machine with no `balance` was reported
+    # nowhere. It ran, too: the call came back `unimplemented` with no reply,
+    # the caller bound None, and the next call was handed None as its argument.
+    # A typo in a method name produced a run that looked like a run.
+    callers = [method
+               for cls in mod.classes.values()
+               for method in cls.methods.values()]
+    callers += list(mod.functions.values())
+
+    for caller in callers:
+        for call in caller.calls:
+            # A call names a machine that exists — an instance — not the
+            # class it is an instance of. `Worker.run()` is a category
+            # error: there may be three Workers, and the call has to say
+            # which one it is talking to.
+            instance = mod.instances.get(call.target)
+            if instance is None:
+                if call.target in mod.classes:
+                    made = [i.var for i in mod.instances.values()
+                            if i.cls == call.target]
                     diags.append(Diagnostic(
                         call.line, 1, "error",
-                        f"{call.target} does not answer {call.method!r}",
-                        hint=f"a {instance.cls} answers: {answers}"))
+                        f"{call.target} is a kind of machine, not one you "
+                        f"can call",
+                        hint=(f"call one of: {', '.join(made)}" if made else
+                              f"make one first, e.g. "
+                              f"server = {call.target}()")))
+                else:
+                    known = ", ".join(mod.instances) or "none yet"
+                    diags.append(Diagnostic(
+                        call.line, 1, "error",
+                        f"there is no machine called {call.target!r}",
+                        hint=f"machines in this program: {known}"))
+                continue
+
+            target = mod.classes.get(instance.cls)
+            if (target is not None and call.method not in BUILTIN_CALLS
+                    and call.method not in target.methods):
+                answers = ", ".join(target.methods) or "nothing yet"
+                diags.append(Diagnostic(
+                    call.line, 1, "error",
+                    f"{call.target} does not answer {call.method!r}",
+                    hint=f"a {instance.cls} answers: {answers}"))
     return diags
 
 

@@ -568,7 +568,13 @@ def _analyse_dialect(source: str, dialect: str, result: Analysis) -> Analysis:
     from .metrics import measure
     from .shapes import dataflow, gantt, spacetime
 
-    if dialect == RPC:
+    # A clocks program is a program of `@process` machines, which the same
+    # grammar and the same runtime handle. Sending it to the old line-oriented
+    # clocks linter instead meant free play on a vector-clock example reported
+    # `cannot parse: '@process'` against every line of a file that is perfectly
+    # valid — fourteen errors in a program with none. The dialect names the
+    # exercise, not a separate front end.
+    if dialect in (RPC, CLOCKS):
         from .runtime import build
         from .syntax import lint as lint_program
 
@@ -587,14 +593,7 @@ def _analyse_dialect(source: str, dialect: str, result: Analysis) -> Analysis:
         cluster, lineage, rdds, expects, budgets = build_spark(source)
         result.outputs = {k: _preview(v) for k, v in rdds.items()}
 
-    elif dialect == CLOCKS:
-        from .notation import build, lint
-        diags = lint(source)
-        result.diagnostics = [d.to_json() for d in diags]
-        if any(d.severity == "error" for d in diags):
-            return result
-        run = build(source)
-        cluster = run.cluster
+
         result.outputs = {k: str(v) for k, v in run.clocks.items()}
         trace = cluster.sorted_trace()
         result.frame = spacetime(trace, title="").to_json()

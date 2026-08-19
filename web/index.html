@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Filled in by .devcontainer/setup.sh from `git remote`, so the commit
+     button knows which repository this checkout came from. -->
+<meta name="dsviz-repo" content="">
+<title>dsviz</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>dsviz</h1>
+  <ol id="journey" class="journey">
+    <li data-step="write"><span>1</span> write your code</li>
+    <li data-step="run"><span>2</span> watch it run</li>
+    <li data-step="improve"><span>3</span> meet the budgets</li>
+    <li data-step="handin"><span>4</span> hand in</li>
+  </ol>
+  <div class="head-right">
+    <span id="pasteBadge" class="badge" hidden></span>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">starting…</span></div>
+    <button id="menuToggle" class="icon" title="menu" aria-label="menu">☰</button>
+  </div>
+</header>
+
+<main>
+  <section class="pane editor-pane">
+    <div class="pane-head">
+      <select id="examples" aria-label="choose what to work on"></select>
+      <div class="controls">
+        <span id="dialect" class="dialect">—</span>
+        <button id="save" title="save your work — the editor keeps it for you between sessions">save</button>
+        <button id="download" title="download a copy of your work">save a copy</button>
+        <button id="commit" title="commit to your assignment repository">commit</button>
+        <button id="handin" class="primary"
+                title="run your code on input you have not seen">hand in</button>
+      </div>
+    </div>
+    <div id="brief" class="brief" hidden></div>
+    <div id="nextStep" class="next-step" hidden></div>
+    <!-- One tab per file. A task ships the files it needs; `use other` in a
+         file pulls it in, and every file is checked as one program. -->
+    <div id="files" class="files" role="tablist" aria-label="files"></div>
+    <div id="editor" class="editor"></div>
+    <div id="diagnostics" class="diagnostics"></div>
+  </section>
+
+  <section class="pane view-pane">
+    <div class="pane-head">
+      <span title="Your machines, and the data moving between them as the job runs">live dataflow</span>
+      <div class="controls">
+        <button id="play" class="primary">▶</button>
+        <input type="range" id="scrub" min="0" max="1000" value="0">
+        <span id="clock" class="clock">0.00s</span>
+        <button id="record" title="Record this dataflow as a video file, saved to your downloads">video</button>
+      </div>
+    </div>
+    <svg id="stage" preserveAspectRatio="xMidYMid meet"></svg>
+    <!-- The verdict stays put; only the numbers below it scroll. Whether the
+         run passed is the one thing that must never be scrolled out of view. -->
+    <div id="results" class="results">
+      <div id="verdict" class="verdict"></div>
+      <div id="metrics" class="metrics"></div>
+    </div>
+  </section>
+
+
+</main>
+
+<!-- The menu: language reference, theme, and the setup the assignment adds. -->
+<div id="menuScrim" class="scrim" hidden></div>
+<aside id="menu" class="menu" hidden aria-label="menu">
+  <div class="menu-head">
+    <span>dsviz</span>
+    <button id="menuClose" class="icon" aria-label="close">×</button>
+  </div>
+  <div class="menu-row">
+    <span>appearance</span>
+    <button id="theme">◐ light / dark</button>
+  </div>
+  <div class="menu-row">
+    <span>assignment setup</span>
+    <button id="setupToggle">show</button>
+  </div>
+  <pre id="setupBody" class="setup" hidden></pre>
+  <div class="menu-row">
+    <span>language reference <kbd>⌘K</kbd></span>
+    <!-- The full documentation is part of this application, served by the same
+         server on the same port; the panel below is the quick version. -->
+    <a id="fullDocs" class="menu-link" href="docs/" target="_blank"
+       rel="noopener">open full docs</a>
+  </div>
+  <div id="docsBody" class="docs-body"></div>
+</aside>
+
+<!-- Search the language reference from anywhere, on ctrl/cmd + K. The same
+     entries the menu panel lists and the docs site publishes. -->
+<div id="paletteScrim" class="scrim" hidden></div>
+<div id="palette" class="palette" hidden role="dialog" aria-label="search the language">
+  <input id="paletteInput" class="palette-input" type="text" autocomplete="off"
+         spellcheck="false" placeholder="search the language">
+  <div id="paletteList" class="palette-list" role="listbox"></div>
+  <div class="palette-foot">
+    <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+    <span><kbd>esc</kbd> close</span>
+    <a class="menu-link" href="docs/" target="_blank" rel="noopener">full docs</a>
+  </div>
+</div>
+
+<div id="metricPop" class="metric-pop" hidden></div>
+
+<div id="handinDialog" class="dialog" hidden>
+  <div class="dialog-head">
+    <span>Hand-in</span>
+    <button id="handinClose" class="icon" aria-label="close">×</button>
+  </div>
+  <div id="handinBody" class="dialog-body"></div>
+</div>
+
+<div id="welcome" class="welcome" hidden>
+  <div class="welcome-card">
+    <h2>How this works</h2>
+    <ol>
+      <li><b>Write your code</b> on the left. You write the functions, you
+        choose their names, and you say which one does which job. Every name
+        you introduce carries a written type, and the editor checks those
+        types as you type.</li>
+      <li><b>Watch it run.</b> The diagram on the right shows your machines
+        and every pair moving between them. Wrong code usually shows up in the
+        picture before you get to the error message.</li>
+      <li><b>Meet the budgets.</b> Getting the right answer is the easy part.
+        The numbers underneath measure how good the design is: how much crosses
+        the network, and how evenly the load is spread. Hover any of them for
+        an explanation.</li>
+      <li><b>Hand in.</b> Your code is re-run on input you have never seen,
+        and that run is what is graded. Write logic that generalises rather
+        than logic fitted to the example.</li>
+    </ol>
+    <p class="welcome-note">Copy and paste are both disabled, so type your
+      code. Attempts are recorded and travel with your submission.</p>
+    <button id="welcomeStart" class="primary">Start</button>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script defer src="examples.js"></script>
+<script defer src="lang.js"></script>
+<script defer src="app.js"></script>
+</body>
+</html>

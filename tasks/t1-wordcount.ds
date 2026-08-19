@@ -1,0 +1,51 @@
+# Task 1 - word count, ignoring case.
+#
+# Write three functions, then wire them into a job. You choose the names,
+# the parameters and the types. Nothing is inferred, and no function is a
+# mapper because of what it is called. A function is accepted in a
+# position only if its signature fits that position.
+#
+#   the mapper       is called once per document, with that document's
+#                    name and its text, and emits pairs:  emit(word, 1)
+#   the reducer      is called once per key, with every value emitted
+#                    for that key, and returns the result for it
+#   the partitioner  is called with a key and the number of reducers,
+#                    and returns which reducer owns that key. The same
+#                    key must always give the same answer
+#
+# Useful functions: split(text), lower(text), sum(values), hash(key)
+# Press ctrl/cmd + K to search the language reference.
+
+# --- the world -------------------------------------------------------
+# The machines that exist, how fast each one is, and how it fails. A
+# machine says both halves of that: error_rate is how likely it is to
+# break, and on_crash is what happens next, either "stay_dead" or
+# "restart".
+#
+# Map output lives in the mapper's memory, so a mapper that dies loses
+# all of it. One that restarts runs its splits again and the job is
+# only slower. One that stays dead takes its share of the counts with
+# it, and the answer comes out wrong. Give m1 an error_rate and run it a
+# hundred times to see how often each of those happens.
+
+@mapper
+class Worker:
+    pass
+
+@reducer
+class Collector:
+    pass
+
+m1 = Worker(speed=1.0)
+m2 = Worker(speed=1.0)
+m3 = Worker(speed=1.0)
+r1 = Collector(speed=1.0)
+r2 = Collector(speed=1.0)
+
+world = World(machines=[m1, m2, m3, r1, r2])
+
+# --- your code -------------------------------------------------------
+# Write the three functions here, then run the job in the world:
+#
+#     job = MapReduce(map=..., reduce=..., partition=...)
+#     world.run(job)

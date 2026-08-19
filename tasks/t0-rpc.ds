@@ -1,0 +1,74 @@
+# Task 0 - a client calling two services.
+#
+# A machine is a decorated class. A call is an ordinary method call on
+# another machine, except that this one crosses a network, waits, and can
+# fail.
+#
+# Calls are synchronous. The caller waits for the round trip, so a slow
+# server shows up as the caller sitting idle. Statuses follow gRPC: ok,
+# unavailable, unimplemented, deadline_exceeded.
+#
+# Six things to try. Every line you need is written below and commented
+# out, marked with the step it belongs to. Take the # off the front and
+# run it again. Steps 1 to 4 stage a failure yourself. Steps 5 and 6 stop
+# staging it and let the machine be unreliable on its own.
+#
+#   1. run it as it is, and watch the caller wait for each answer
+#   2. give the slow call less time than it needs
+#   3. take the bank down, then retry into it. A machine that is down is
+#      still down when the retry arrives, which is the point
+#   4. bring it back yourself, and ask it again
+#   5. undo 3 and 4, and make the bank unreliable instead. Which calls
+#      fail now differs from one run to the next
+#   6. tell the bank to come back on its own. Same error rate, same
+#      retries, and a very different job: a retry only helps a machine
+#      that recovers.
+
+# --- the machines ----------------------------------------------------
+# A class is a kind of machine. What runs are the instances you make from
+# it, and each instance carries its own speed.
+
+@machine
+class Ledger:
+    @duration(0.4)
+    def balance(account: string) -> int:
+        return 120
+
+@machine
+class Rates:
+    @duration(0.9)
+    def to_euros(amount: int) -> int:
+        return amount * 2
+
+# step 5: make error_rate 0.5
+# step 6: then add   on_crash="restart", restart_after=0.5
+bank = Ledger(speed=1.0, error_rate=0.0)
+fx = Rates(speed=1.0)
+
+# --- the world -------------------------------------------------------
+
+world = World(machines=[bank, fx])
+
+# --- the job ---------------------------------------------------------
+# The work is a function. The job is that function run in the world.
+
+def story() -> void:
+    # The second call needs the answer to the first, so the caller sits
+    # and waits in between. That waiting is what the network costs you,
+    # and the timeline shows it.
+
+    # step 3: uncomment the next line, so the bank is already down
+    # before anyone asks it anything
+    # bank.crash()
+
+    chf: int = bank.balance("savings")    # step 3: add  , retries=2
+    eur: int = fx.to_euros(chf)           # step 2: add  , deadline=0.2
+
+    # step 4: uncomment both. You bring it back, here, and it answers
+    # bank.restart()
+    # again: int = bank.balance("savings")
+
+# `times` is how many rounds of the job to run.
+client = Calls(run=story, times=1)         # step 5: make it 4
+
+world.run(client)

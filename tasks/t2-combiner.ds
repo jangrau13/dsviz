@@ -1,0 +1,34 @@
+# Task 2 - the answer must not change, only the traffic.
+#
+# Watch NETWORK_MSGS before and after you add the combiner.
+#
+# Bring your mapper and reducer across from Task 1, then add one more
+# function:
+#
+#   the combiner  runs on the mapper, before anything crosses the
+#                 network. It is given a key and some of that key's
+#                 values, and returns a partial result. It may run zero
+#                 times, once, or many times over the same data, so it
+#                 has to be safe however often it runs.
+
+# --- the world -------------------------------------------------------
+
+@mapper
+class Worker:
+    pass
+
+@reducer
+class Collector:
+    pass
+
+m1 = Worker(speed=1.0)
+m2 = Worker(speed=1.0)
+m3 = Worker(speed=1.0)
+r1 = Collector(speed=1.0)
+r2 = Collector(speed=1.0)
+
+world = World(machines=[m1, m2, m3, r1, r2])
+
+# --- your code -------------------------------------------------------
+#     job = MapReduce(map=..., reduce=..., combine=..., partition=...)
+#     world.run(job)

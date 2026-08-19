@@ -1,0 +1,48 @@
+# Task 4 - what happened before what.
+#
+# Three processes exchange messages. No one shares a clock, so the only
+# ordering anyone can know is the one the messages create: if p1 sends to
+# p2, that send happened before p2 received it. Everything else is
+# concurrent, however it looks on the page.
+#
+# Each process carries a vector clock with one entry per process. A send
+# increments the sender's own entry and carries the stamp along. A
+# receive takes the pointwise maximum, then increments its own entry.
+#
+# Try these in order. Steps 2 and 4 are marked on the lines they belong
+# to.
+#
+#   1. run it and read the diagram: time runs down, messages run across
+#   2. add another message and watch which events become ordered
+#   3. find two events that are concurrent, where neither stamp
+#      dominates the other. This one is a question, not an edit
+#   4. make one process slow, and see that order has nothing to do with
+#      wall time
+
+# --- the machines ----------------------------------------------------
+
+@process
+class Node:
+    pass
+
+p1 = Node(speed=1.0)      # step 4: make it 0.3
+p2 = Node(speed=1.0)
+p3 = Node(speed=1.0)
+
+# --- the world -------------------------------------------------------
+
+world = World(machines=[p1, p2, p3])
+
+# --- the job ---------------------------------------------------------
+
+def story() -> void:
+    p1.send(p2, "hello")
+    p2.send(p3, "onwards")
+    p3.send(p1, "reply")
+    # step 2: uncomment, and see what it orders that was not ordered
+    # before
+    # p2.send(p1, "and again")
+
+job = Calls(run=story)
+
+world.run(job)

@@ -1,0 +1,488 @@
+/* dsviz — dark by default for the lecture hall, light for daylight and print. */
+
+/*
+ * The hidden attribute only sets `display: none` as a default, so any rule
+ * that gives an element its own display quietly outranks it. That is how the
+ * welcome dialog came to stay on screen after Start: the click set .hidden,
+ * `.welcome { display: grid }` won, and the modal never vanished. Make the
+ * attribute authoritative so toggling it is enough, whatever the element's
+ * own display happens to be.
+ */
+[hidden] { display: none !important; }
+
+:root, :root[data-theme="dark"] {
+  --bg: #0f1114;
+  --panel: #16191d;
+  --line: #262b31;
+  --text: #e6e8ea;
+  --muted: #9aa0a6;
+  --faint: #4a5058;
+  --accent: #4C9BE8;
+  --ok: #63C77A;
+  --warn: #E8B44C;
+  --bad: #E05252;
+  --lane: #3a3f45;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f6f7f9;
+  --line: #dfe3e8;
+  --text: #1a1d21;
+  --muted: #5f6771;
+  --faint: #9aa0a6;
+  --accent: #1f6fd0;
+  --ok: #2e9e52;
+  --warn: #b8860b;
+  --bad: #c62828;
+  --lane: #c8cdd3;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0; height: 100vh; display: flex; flex-direction: column;
+  background: var(--bg); color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  transition: background 0.15s, color 0.15s;
+}
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--line);
+}
+header h1 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+.dialect {
+  font-size: 0.7rem; color: var(--accent); font-weight: 500;
+  border: 1px solid var(--line); border-radius: 999px; padding: 0.05rem 0.5rem;
+  margin-left: 0.35rem;
+}
+.head-right { display: flex; align-items: center; gap: 0.55rem; }
+
+.badge {
+  font-size: 0.7rem; color: var(--warn);
+  border: 1px solid var(--warn); border-radius: 999px; padding: 0.1rem 0.5rem;
+}
+
+.status { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--muted); }
+.status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.status.busy .dot { background: var(--warn); animation: pulse 1s infinite; }
+.status.ok .dot { background: var(--ok); }
+.status.bad .dot { background: var(--bad); }
+@keyframes pulse { 50% { opacity: 0.25; } }
+
+/* Half the page is code; the other half is two-thirds diagram, one-third
+   results. `min-height: 0` on every level is what stops a tall child from
+   growing the page instead of scrolling inside its own pane. */
+main {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+}
+
+/* The right half, split 2:1. */
+.view-pane {
+  display: grid; grid-template-rows: auto 2fr 1fr;
+  min-height: 0;
+}
+
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.editor-pane { border-right: 1px solid var(--line); }
+
+.pane-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.4rem 0.7rem; font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--line);
+}
+.controls { display: flex; align-items: center; gap: 0.45rem; }
+
+select, button {
+  background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  border-radius: 5px; padding: 0.22rem 0.5rem; font-size: 0.76rem; cursor: pointer;
+  font-family: inherit;
+}
+button.primary { border-color: var(--accent); color: var(--accent); }
+button:hover, select:hover { border-color: var(--accent); }
+
+.editor { flex: 1; min-height: 0; }
+
+.brief {
+  padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--line);
+  background: var(--panel); flex: 0 0 auto;
+}
+.brief-title { font-weight: 600; font-size: 0.82rem; }
+.brief-text { color: var(--muted); font-size: 0.76rem; margin-top: 0.15rem; }
+.criteria { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem; }
+.crit {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.68rem;
+  border: 1px solid var(--line); border-radius: 999px; padding: 0.08rem 0.45rem;
+}
+.crit.expect { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.crit.budget { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.crit.hidden-crit { color: var(--muted); border-style: dashed; }
+
+.diagnostics {
+  flex: 0 0 auto; max-height: 30%; overflow: auto;
+  border-top: 1px solid var(--line);
+  padding: 0.45rem 0.7rem; font-size: 0.76rem;
+}
+.diagnostics .ok { color: var(--ok); }
+.diag { padding: 0.28rem 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.diag:last-child { border-bottom: 0; }
+.diag:hover { background: var(--panel); }
+.diag .where { color: var(--muted); margin-right: 0.4rem; font-family: ui-monospace, Menlo, monospace; }
+.diag.error .msg { color: var(--bad); }
+.diag.warning .msg { color: var(--warn); }
+.diag .hint { color: var(--muted); margin-top: 0.12rem; }
+
+#stage { width: 100%; height: 100%; min-height: 0; display: block; }
+.node-label { font-size: 0.19px; font-weight: 600; }
+.node-role  { font-size: 0.125px; fill: var(--muted); }
+.lane-label { font-size: 0.19px; }
+.chip-label { font-size: 0.15px; font-family: ui-monospace, Menlo, monospace; }
+.rpc-label  { font-size: 0.145px; font-family: ui-monospace, Menlo, monospace; }
+.marker     { font-size: 0.26px; }
+.note       { font-size: 0.19px; fill: var(--muted); }
+.chip.landed { opacity: 0.9; }
+.rpc.active line { stroke-dasharray: 0.11 0.07; }
+
+#scrub { width: 160px; accent-color: var(--accent); }
+.clock { font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; color: var(--muted); min-width: 3.4em; }
+
+/* The bottom third: a verdict that stays put, and numbers that scroll.
+   Everything used to share one scrolling box, so "wrong answer" and the reason
+   for it scrolled away behind the metric tiles — exactly when they mattered. */
+.results {
+  border-top: 1px solid var(--line); min-height: 0;
+  display: flex; flex-direction: column;
+}
+.verdict {
+  flex: 0 0 auto; padding: 0.5rem 0.7rem 0.35rem;
+  max-height: 45%; overflow-y: auto;
+}
+.verdict:empty { display: none; }
+.metrics {
+  flex: 1; padding: 0.35rem 0.7rem 0.5rem;
+  overflow-y: auto; min-height: 0;
+}
+.metric-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.metric {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.3rem 0.5rem; min-width: 84px;
+}
+.mname { font-size: 0.63rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.mvalue { font-family: ui-monospace, Menlo, monospace; font-size: 0.9rem; }
+.mvalue .unit { font-size: 0.62rem; color: var(--muted); margin-left: 0.12rem; }
+
+.verdict { font-size: 0.78rem; margin-bottom: 0.4rem; font-family: ui-monospace, Menlo, monospace; }
+.verdict.AC { color: var(--ok); }
+.verdict.WA, .verdict.CE, .verdict.RE, .verdict.TLE { color: var(--bad); }
+.verdict .case { color: var(--muted); font-size: 0.72rem; margin-top: 0.12rem; }
+
+.outputs { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.4rem; }
+.out {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.7rem;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 0.1rem 0.35rem; color: var(--muted);
+}
+.out b { color: var(--text); font-weight: 600; }
+
+/* --- menu --- */
+.scrim {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 40;
+}
+.menu {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 92vw);
+  background: var(--bg); border-left: 1px solid var(--line); z-index: 41;
+  display: flex; flex-direction: column; min-height: 0;
+  box-shadow: -8px 0 28px rgba(0,0,0,0.3);
+}
+.menu-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+.menu-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--line);
+  font-size: 0.8rem; color: var(--muted);
+}
+.menu-section {
+  padding: 0.6rem 0.8rem 0.3rem; font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--accent);
+}
+.setup {
+  margin: 0; padding: 0.6rem 0.8rem; background: var(--panel);
+  border-bottom: 1px solid var(--line); font-size: 0.72rem;
+  font-family: ui-monospace, Menlo, monospace; color: var(--muted);
+  white-space: pre-wrap; overflow-x: auto;
+}
+button.icon {
+  border: 0; background: transparent; font-size: 1.05rem; line-height: 1;
+  padding: 0.15rem 0.35rem; color: var(--text);
+}
+button.icon:hover { color: var(--accent); }
+
+/* --- docs --- */
+.docs { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.docs-body { overflow-y: auto; flex: 1; min-height: 0; padding: 0.2rem 0.8rem 1rem; font-size: 0.78rem; }
+.docs-body h3 {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--accent); margin: 1rem 0 0.4rem; border-bottom: 1px solid var(--line);
+  padding-bottom: 0.2rem;
+}
+.docs-body h3:first-child { margin-top: 0; }
+.doc-item { margin-bottom: 0.7rem; }
+.doc-item .sig {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem;
+  color: var(--text); background: var(--panel); padding: 0.08rem 0.3rem;
+  border-radius: 4px; border: 1px solid var(--line);
+}
+.doc-item .sum { margin-top: 0.22rem; }
+.doc-item .det { color: var(--muted); margin-top: 0.15rem; font-size: 0.74rem; }
+.doc-item .ex {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.71rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+  padding: 0.35rem 0.45rem; margin: 0.3rem 0 0; overflow-x: auto;
+  color: var(--muted); white-space: pre;
+}
+
+.toast {
+  position: fixed; bottom: 1.1rem; left: 50%; transform: translateX(-50%);
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--warn); border-radius: 6px;
+  padding: 0.5rem 0.9rem; font-size: 0.8rem; z-index: 50;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+}
+
+/* --- the four-step story ------------------------------------------------
+   Bachelor students meet this tool cold. The header states what they are
+   meant to be doing, and lights up as they get there. */
+.journey {
+  display: flex; gap: 0.15rem; list-style: none; margin: 0; padding: 0;
+  font-size: 0.72rem; color: var(--faint);
+}
+.journey li {
+  display: flex; align-items: center; gap: 0.3rem;
+  padding: 0.12rem 0.55rem 0.12rem 0.35rem;
+  border: 1px solid transparent; border-radius: 999px;
+}
+.journey li span {
+  display: inline-grid; place-items: center;
+  width: 1.05rem; height: 1.05rem; border-radius: 50%;
+  border: 1px solid currentColor; font-size: 0.62rem;
+}
+.journey li.now { color: var(--accent); border-color: var(--line); background: var(--panel); }
+.journey li.done { color: var(--ok); }
+@media (max-width: 1100px) { .journey li:not(.now) { display: none; } }
+
+.steps {
+  margin: 0.4rem 0 0; padding-left: 1.1rem;
+  font-size: 0.75rem; color: var(--muted); line-height: 1.45;
+}
+.steps li { margin-bottom: 0.12rem; }
+
+/* --- metric explanations --- */
+.metric { cursor: help; }
+.metric:hover, .metric:focus { border-color: var(--accent); outline: none; }
+.metric-pop {
+  position: fixed; z-index: 60; width: min(360px, 90vw);
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.6rem 0.7rem; font-size: 0.76rem; line-height: 1.45;
+  box-shadow: 0 8px 26px rgba(0,0,0,0.32);
+}
+.pop-title {
+  font-weight: 600; font-family: ui-monospace, Menlo, monospace;
+  display: flex; justify-content: space-between; gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+.pop-dir { font-weight: 400; font-size: 0.68rem; color: var(--accent); }
+.pop-why { color: var(--muted); margin-top: 0.3rem; }
+.pop-how { margin-top: 0.3rem; padding-top: 0.3rem; border-top: 1px solid var(--line); }
+
+/* --- hand-in --- */
+.dialog {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(520px, 92vw); max-height: 80vh; overflow: auto; z-index: 60;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+}
+.dialog-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line); font-weight: 600;
+}
+.dialog-body { padding: 0.8rem; }
+.handin-verdict { font-size: 1rem; font-weight: 600; }
+.handin-verdict.AC { color: var(--ok); }
+.handin-verdict.WA, .handin-verdict.CE, .handin-verdict.RE { color: var(--bad); }
+.handin-note { color: var(--muted); font-size: 0.78rem; line-height: 1.5; }
+.handin-cases { list-style: none; padding: 0; margin: 0.5rem 0; font-size: 0.78rem; }
+.handin-cases li {
+  display: flex; gap: 0.5rem; padding: 0.25rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.handin-cases li span {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.68rem;
+  min-width: 2.6rem; text-transform: uppercase;
+}
+.handin-cases li.AC span { color: var(--ok); }
+.handin-cases li:not(.AC) span { color: var(--bad); }
+
+/* --- welcome --- */
+.welcome {
+  position: fixed; inset: 0; z-index: 70; display: grid; place-items: center;
+  background: rgba(0,0,0,0.55); padding: 1rem;
+}
+.welcome-card {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+  padding: 1.3rem 1.5rem; width: min(620px, 94vw); max-height: 88vh; overflow: auto;
+}
+.welcome-card h2 { margin: 0 0 0.7rem; font-size: 1.05rem; }
+.welcome-card ol { padding-left: 1.2rem; margin: 0; line-height: 1.6; font-size: 0.86rem; }
+.welcome-card li { margin-bottom: 0.55rem; }
+.welcome-card code {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.82em;
+  background: var(--panel); padding: 0.05rem 0.25rem; border-radius: 3px;
+}
+.welcome-note {
+  color: var(--muted); font-size: 0.78rem; margin: 0.9rem 0 1rem;
+  padding: 0.5rem 0.65rem; border-left: 2px solid var(--warn); background: var(--panel);
+}
+.welcome-card button { padding: 0.4rem 1.1rem; font-size: 0.85rem; }
+
+/* --- friction against bulk transcription -------------------------------
+   The intent is that handing this task to an AI costs real effort: the task
+   text, the starter and the diagnostics cannot be selected or copied, so the
+   cheapest route left is a screenshot. This is friction, not security — the
+   viva is what actually establishes understanding. */
+.brief, .diagnostics, .docs-body, .metrics, .welcome-card, .journey {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The results panel is still readable, just not selectable in bulk. */
+.metrics, .metric-pop { -webkit-touch-callout: none; }
+
+/* --- what to do next ----------------------------------------------------
+   One sentence, chosen from whatever actually failed. A student who is stuck
+   should not have to work out which panel to read. */
+.next-step {
+  padding: 0.45rem 0.7rem; font-size: 0.78rem; line-height: 1.4;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+  border-left: 3px solid var(--muted);
+}
+.next-step.error { border-left-color: var(--bad); }
+.next-step.warn  { border-left-color: var(--warn); }
+.next-step.ok    { border-left-color: var(--ok); color: var(--ok); }
+
+.crit.require {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+/* --- learning objectives -------------------------------------------------
+   Collapsed by default: a student who wants to get on with the work should
+   not have to scroll past them, but a student wondering why they are doing
+   this can open them. */
+.goals { margin: 0.45rem 0 0; font-size: 0.75rem; }
+.goals summary {
+  cursor: pointer; color: var(--muted); user-select: none;
+  text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.68rem;
+}
+.goals summary:hover { color: var(--accent); }
+.goals ul { margin: 0.35rem 0 0; padding-left: 0; list-style: none; }
+.goals li {
+  color: var(--muted); line-height: 1.45; margin-bottom: 0.3rem;
+  display: flex; gap: 0.4rem;
+}
+.goals .lvl {
+  flex: 0 0 auto; font-size: 0.6rem; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 999px; padding: 0 0.4rem; height: 1.1rem; line-height: 1.1rem;
+}
+
+/* --- file tabs --- */
+/* A task is a set of files. The bar hides itself when there is only one, so a
+   single-file task looks exactly as it did. */
+.files {
+  display: flex; gap: 2px; padding: 0 0.5rem;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+  overflow-x: auto; flex: 0 0 auto;
+}
+.file-tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); font: inherit; font-size: 0.76rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  padding: 0.35rem 0.6rem; cursor: pointer; white-space: nowrap;
+}
+.file-tab:hover { color: var(--fg); }
+.file-tab.active {
+  color: var(--fg); border-bottom-color: var(--accent);
+}
+/* An error in a file you are not looking at still has to be findable. */
+.file-tab.has-error::after {
+  content: "●"; color: var(--bad); font-size: 0.6rem; margin-left: 0.3rem;
+}
+
+/* A link that sits where a button sits, in the menu's rows. */
+.menu-link {
+  font: inherit;
+  color: var(--accent, #2563eb);
+  text-decoration: none;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+}
+.menu-link:hover { text-decoration: underline; }
+
+/* --- the language search (ctrl/cmd + K) ---
+ * Anchored near the top rather than centred: the list grows downwards as you
+ * type, and a centred box would move the first result under the cursor. */
+.palette {
+  position: fixed; top: 12vh; left: 50%; transform: translateX(-50%);
+  width: min(560px, 92vw); max-height: 70vh; z-index: 61;
+  display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.45); overflow: hidden;
+}
+.palette-input {
+  border: 0; border-bottom: 1px solid var(--line); background: transparent;
+  color: var(--text); font: inherit; font-size: 0.95rem;
+  padding: 0.7rem 0.9rem; outline: none;
+}
+.palette-list { overflow-y: auto; padding: 0.3rem 0; }
+.palette-item {
+  padding: 0.4rem 0.9rem; cursor: pointer; border-left: 2px solid transparent;
+}
+.palette-item[aria-selected="true"] {
+  background: var(--panel); border-left-color: var(--accent);
+}
+.palette-item .sig {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.78rem;
+  color: var(--accent); white-space: pre-wrap;
+}
+.palette-item .sum { font-size: 0.78rem; margin-top: 0.1rem; }
+.palette-item .det, .palette-item .grp {
+  color: var(--muted); font-size: 0.72rem; margin-top: 0.1rem;
+}
+.palette-item .ex {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem;
+  background: var(--panel); border-radius: 4px; padding: 0.3rem 0.45rem;
+  margin: 0.3rem 0 0; white-space: pre-wrap; overflow-x: auto;
+}
+.palette-empty { padding: 0.9rem; color: var(--muted); font-size: 0.8rem; }
+.palette-foot {
+  display: flex; gap: 0.8rem; align-items: center;
+  padding: 0.45rem 0.9rem; border-top: 1px solid var(--line);
+  font-size: 0.7rem; color: var(--muted);
+}
+.palette-foot a { margin-left: auto; }
+kbd {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.68rem;
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 0.02rem 0.22rem; margin-right: 0.15rem; color: var(--muted);
+}

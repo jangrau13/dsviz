@@ -119,15 +119,15 @@ try:
     print("=== a fresh workspace starts from the task starters ===")
     status, body = request(f"{base}/api/workspace")
     assert status == 200, status
-    assert "t1-wordcount.ds" in body["files"], sorted(body["files"])
+    assert "a1-wordcount.ds" in body["files"], sorted(body["files"])
     print(f"ok — {len(body['files'])} starter(s) served, no src/ needed")
 
     print("\n=== work put in comes back out ===")
-    status, _ = request(f"{base}/api/workspace/t1-wordcount.ds",
+    status, _ = request(f"{base}/api/workspace/a1-wordcount.ds",
                         method="PUT", body=SOLUTION)
     assert status == 200, status
     status, body = request(f"{base}/api/workspace")
-    assert body["files"]["t1-wordcount.ds"] == SOLUTION, "the workspace lost the edit"
+    assert body["files"]["a1-wordcount.ds"] == SOLUTION, "the workspace lost the edit"
     assert (root / ".dsviz" / "workspace.json").exists(), "nothing was persisted"
     print("ok — saved, persisted to .dsviz/workspace.json, and served back")
 
@@ -140,23 +140,23 @@ try:
 
     print("\n=== handing in writes solutions/, and only the server does ===")
     assert not (root / "solutions").exists(), "solutions/ exists before any hand-in"
-    status, body = request(f"{base}/api/handin/t1-wordcount",
+    status, body = request(f"{base}/api/handin/a1-wordcount",
                            method="POST", body=SOLUTION)
     assert status == 200, body
-    written = root / "solutions" / "t1-wordcount.ds"
+    written = root / "solutions" / "a1-wordcount.ds"
     assert written.exists(), "the hand-in wrote nothing"
     print(f"ok — wrote {body['handed_in']}")
 
     print("\n=== what it wrote is evidence the code ran ===")
     from dsviz import attest
-    reasons = attest.verify("t1-wordcount", written.read_text())
+    reasons = attest.verify("a1-wordcount", written.read_text())
     assert reasons == [], reasons
     # And the same code without going through the server is not.
-    assert attest.verify("t1-wordcount", SOLUTION), "an unstamped copy verified"
+    assert attest.verify("a1-wordcount", SOLUTION), "an unstamped copy verified"
     print("ok — the written file verifies; the same code copied by hand does not")
 
     print("\n=== a hand-in of code that does not run is refused ===")
-    status, body = request(f"{base}/api/handin/t1-wordcount",
+    status, body = request(f"{base}/api/handin/a1-wordcount",
                            method="POST", body="def broken(")
     assert status == 400, status
     assert written.read_text() != "def broken(", "the bad hand-in overwrote the good one"

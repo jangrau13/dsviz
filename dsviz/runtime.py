@@ -18,7 +18,7 @@ new decorator gets a diagram for free.
 
 from __future__ import annotations
 
-from .core import Cluster
+from .core import Cluster, Event
 from .notation import Diagnostic, NotationError
 from .syntax import LIFECYCLE, MACHINE_SETTINGS, lint
 
@@ -578,71 +578,63 @@ class CausalClocks(Clocks):
                    f"{msg['frm']} — nothing arrived that would release it")
 
 
+# How many of a result's records are reported. A pipeline may end with more
+# rows than anyone wants listed under a diagram; the count is on the RDD node.
+OUTPUT_LIMIT = 40
+
+
 def run_pipeline(mod, c: Cluster, job, run) -> bool:
     """
     Run an RDD pipeline across the world's machines.
 
-    The assignments in the program are the lineage, so losing a step means
-    recomputing it from its ancestors rather than reloading it — which is the
-    one thing Spark does that MapReduce cannot, and the reason the graph is
-    worth writing down at all.
+    The pipeline is evaluated on real records before anything is drawn, so the
+    picture is of what the program computed rather than of its shape. This used
+    to build a lineage graph and time it without ever applying an operation,
+    which is why a pipeline of invented names — `frobnicate`, `wibble` — drew a
+    clean diagram and scored full marks.
+
+    The executors are the machines the world was given, all of them. Setting up
+    a hundred machines runs the job on a hundred.
     """
-    from .patterns import Lineage
+    from . import pyspark
 
     if not mod.rdds:
         return False
 
-    lineage = Lineage()
-    for rdd in mod.rdds:
-        lineage.rdd(rdd.var, parents=rdd.parents, op=rdd.op)
-
-    workers = [name for name in c.machines]
-    if not workers:
+    workers = list(run.on) if getattr(run, "on", None) else list(c.machines)
+    executors = [c.machines[n] for n in workers if n in c.machines]
+    if not executors:
         return False
 
-    lost = job.settings.get("lose")
-    rebuild = set(lineage.recompute_set(str(lost))) if lost else set()
+    pipe = pyspark.build(mod.rdds, mod.inputs)
+    for warning in pipe.warnings:
+        # Said out loud on the diagram too, not only in the editor's margin:
+        # a reducer that is not associative is a property of the run, and the
+        # run is what the picture is of.
+        c.note(warning.message)
+    lose = job.settings.get("lose") or job.roles.get("lose") or ""
+    pyspark.simulate(pipe, c, executors, lose=str(lose))
 
-    def live() -> list:
-        """The executors still answering, in declaration order."""
-        return [c.machines[n] for n in workers if c.machines[n].up_at(c.machines[n].clock)]
+    for step in pipe.named_steps():
+        c.trace.append(Event(t=0.0, kind="rdd", machine=None, detail={
+            "name": step.name, "op": step.op, "stage": step.stage,
+            "wide": step.wide, "records": len(step.data),
+            "parents": list(step.parents)}))
 
-    STEP = 0.6
-
-    for level, stage in enumerate(lineage.stages()):
-        for node in stage:
-            # Each step is split across the executors and the pieces run at
-            # the same time, which is what makes a slow executor show up as a
-            # straggler. Assigning whole steps put a linear pipeline entirely
-            # on the first machine, so a three-executor world drew as one.
-            crew = live()
-            if not crew:
-                c.note(f"every executor is down — {node} cannot be computed")
-                break
-            share = STEP / len(crew)
-            label = f"{node} ({lineage.g.nodes[node].get('op', '')})"
-            for machine in crew:
-                machine.work(label, duration=share)
-                if not machine.alive:
-                    # It was holding a piece of this step. The lineage says how
-                    # to make that piece again, which is the whole argument for
-                    # writing the lineage down — so it joins the rebuild list
-                    # instead of ending the job.
-                    rebuild |= set(lineage.recompute_set(node))
-                    c.note(f"{machine.name} died on {node} — its partition "
-                           f"goes back through the lineage")
-        c.barrier(f"end of stage {level + 1}")
-
-    for node in sorted(rebuild):
-        crew = live()
-        if not crew:
-            c.note(f"nothing left alive to recompute {node} on")
-            break
-        # Recomputation does not need the machine that died, only its
-        # ancestors — so it goes to whoever is up.
-        crew[0].work(f"recompute {node}", duration=STEP)
-    if lost:
-        c.note(f"{lost} was lost — rebuilt from its lineage, not from disk")
+    # What the job produced, so the editor can show it and the grader can
+    # check it. Without this a pipeline ran, drew a diagram and reported
+    # nothing at all: a student could not read their own answer off the page.
+    final = pipe.by_name(str(job.settings.get("pipeline", ""))) \
+        or (pipe.named_steps() or [None])[-1]
+    if final is not None:
+        for record in final.data[:OUTPUT_LIMIT]:
+            if isinstance(record, tuple) and len(record) == 2:
+                key, value = record
+            else:
+                continue
+            c.trace.append(Event(t=0.0, kind="output", machine=None,
+                                 detail={"key": str(key), "value": value}))
+    c.pipeline = pipe
     return True
 
 

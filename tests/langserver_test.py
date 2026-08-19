@@ -68,8 +68,8 @@ for name, spec in ASSIGNMENTS.items():
 # no diagnostic, and at runtime the call came back `unimplemented` with no
 # reply, so the caller bound nothing and passed nothing on. A typo produced a
 # run that looked like a run.
-t0 = ASSIGNMENTS["t0-rpc"].starter
-typo = errors(t0.replace("def balance(", "def balanc("), "t0-rpc")
+t0 = ASSIGNMENTS["a1-rpc"].starter
+typo = errors(t0.replace("def balance(", "def balanc("), "a1-rpc")
 ok("a call to a method that does not exist is reported",
    any("does not answer" in d["message"] for d in typo),
    "; ".join(d["message"] for d in typo[:2]) or "(nothing reported)")
@@ -82,7 +82,7 @@ ok("and it names what the machine does answer",
    (typo[0].get("hint") if typo else "") or "(no hint)")
 
 missing = errors(t0.replace('bank.balance("savings")',
-                            'nosuch.balance("savings")'), "t0-rpc")
+                            'nosuch.balance("savings")'), "a1-rpc")
 ok("a call to a machine that does not exist is reported",
    any("no machine called" in d["message"] for d in missing),
    "; ".join(d["message"] for d in missing[:2]) or "(nothing reported)")
@@ -92,14 +92,14 @@ ok("a call to a machine that does not exist is reported",
 # so a class does not declare them. Checking calls inside plain functions —
 # which is what fixed the typo case — reported all four sends in the clocks
 # task as methods `Node` fails to answer.
-for name in ("t4-clocks", "t8-lamport", "t9-buffering"):
+for name in ("a3-vector", "a3-lamport", "a3-buffering"):
     got = errors(ASSIGNMENTS[name].starter, name)
     ok(f"{name}: send and broadcast are not reported as missing methods",
        not any("does not answer" in d["message"] for d in got),
        "; ".join(d["message"] for d in got[:2]))
 
 # `crash` and `restart` likewise.
-crashing = errors(t0.replace("    # bank.crash()", "    bank.crash()"), "t0-rpc")
+crashing = errors(t0.replace("    # bank.crash()", "    bank.crash()"), "a1-rpc")
 ok("crash and restart are not reported as missing methods",
    not any("does not answer" in d["message"] for d in crashing),
    "; ".join(d["message"] for d in crashing[:2]))
@@ -107,7 +107,7 @@ ok("crash and restart are not reported as missing methods",
 # --- the page gets a diagram when the program is sound ------------------
 # A clean program with nothing to draw is a blank right-hand panel, which
 # reads as a broken page rather than as a program that did nothing.
-for name in ("t0-rpc", "t4-clocks", "t3-spark"):
+for name in ("a1-rpc", "a3-vector", "a2-wordcount"):
     payload = json.loads(analyse(ASSIGNMENTS[name].starter, name))
     ok(f"{name} produces a diagram", bool(payload.get("frame")),
        "no frame" if not payload.get("frame") else "")

@@ -42,9 +42,16 @@ def starter_for(name: str) -> str:
 
 @dataclass
 class Expectation:
-    """A correctness check: this key must end with this count."""
+    """
+    A correctness check: this key must end with this value.
+
+    A count, for the jobs that count. But MapReduce is not counting, and the
+    value type is the job's to choose: an inverted index reduces a term to the
+    documents it appears in, so the expected answer there is a string. The
+    field keeps its name because every existing task is a count.
+    """
     key: str
-    count: int
+    count: int | str
     hidden: bool = False
 
 
@@ -94,12 +101,12 @@ def build_cluster(dialect: str, source: str, *, seed: int | None = None):
     # out meant it fell through to MapReduce, so every clocks task failed to
     # hand in with "no input splits declared": `detect_dialect` says "clocks",
     # nothing here claimed it, and the default claimed everything.
-    if dialect in ("rpc", "clocks"):
+    # Spark joined this list once its pipelines became part of the one
+    # language: a Spark program declares machines, builds a world and runs a
+    # job like every other, so it is built by the same builder.
+    if dialect in ("rpc", "clocks", "spark"):
         from .runtime import build
         return build(source, seed=seed)
-    if dialect == "spark":
-        from .notation_spark import build_spark
-        return build_spark(source, seed=seed)[0]
     from .notation_mr import build_mr
     return build_mr(source, seed=seed)[0]
 
@@ -147,7 +154,8 @@ class Assignment:
         out = [{"kind": "require", "text": r.name, "why": r.why, "hidden": False}
                for r in self.requires]
         for e in self.expects:
-            out.append({"kind": "expect", "text": f"{e.key} = {e.count}",
+            shown = f'"{e.count}"' if isinstance(e.count, str) else e.count
+            out.append({"kind": "expect", "text": f"{e.key} = {shown}",
                         "hidden": e.hidden} if not e.hidden else
                        {"kind": "expect", "text": "hidden test", "hidden": True})
         for b in self.budgets:
@@ -245,7 +253,7 @@ class Assignment:
                 "holdout_cases": len(self.holdout_expects or self.expects)}
 
 
-def _diagnose(key: str, want: int, got: int, cluster) -> str:
+def _diagnose(key: str, want, got, cluster) -> str:
     """
     Say what is probably wrong, not just that something is.
 
@@ -255,6 +263,9 @@ def _diagnose(key: str, want: int, got: int, cluster) -> str:
     """
     outputs = {e.detail["key"]: e.detail["value"]
                for e in cluster.trace.of_kind("output")}
+
+    if isinstance(want, str):
+        return _diagnose_text(key, want, got, outputs)
 
     if got == 0 and key not in outputs:
         return (f"nothing was counted for {key!r} — does your map emit it? "
@@ -291,6 +302,43 @@ def _diagnose(key: str, want: int, got: int, cluster) -> str:
 
     return (f"counted {got} instead of {want} — fewer values reached this key "
             "than expected; check map, then partition")
+
+
+def _diagnose_text(key: str, want: str, got, outputs: dict) -> str:
+    """
+    Say what is wrong with a text answer, in the terms the job is about.
+
+    A posting list has three ways to be wrong and they are not the same
+    mistake. The words can be right and the order wrong, which means the
+    answer depends on which mapper finished first. A document can be repeated,
+    which means nothing removed the repeats. Or the documents themselves are
+    wrong, which is a map or a partition problem.
+    """
+    if key not in outputs:
+        return (f"nothing came out for {key!r} — does your map emit it? "
+                f"(it emitted: {', '.join(sorted(outputs)[:6]) or 'nothing'})")
+
+    text = str(got)
+    mine, theirs = text.split(), want.split()
+
+    if sorted(mine) == sorted(theirs):
+        return (f"got {text!r}, which is the right documents in the wrong "
+                "order — the answer must not depend on which mapper finished "
+                "first")
+
+    if len(mine) != len(set(mine)) and sorted(set(mine)) == sorted(theirs):
+        repeated = sorted({d for d in mine if mine.count(d) > 1})
+        verb = "appears" if len(repeated) == 1 else "appear"
+        return (f"got {text!r} — {', '.join(repeated)} {verb} more than "
+                "once, so a document is being counted once per occurrence "
+                "rather than once")
+
+    extra = sorted(set(mine) - set(theirs))
+    missing = sorted(set(theirs) - set(mine))
+    detail = ", ".join(
+        ([f"should not be there: {', '.join(extra)}"] if extra else [])
+        + ([f"missing: {', '.join(missing)}"] if missing else []))
+    return f"got {text!r} — {detail or 'not what was expected'}"
 
 
 def _check_requirement(req: "Requirement", cluster) -> tuple[bool, str]:
@@ -400,8 +448,8 @@ GOALS = {
 # served to the browser, so anything here is visible to students.
 
 WORLD_BASICS = Assignment(
-    name="t0-world",
-    title="Start here: machines and a world",
+    name="a1-world",
+    title="Machines, a world, and a job",
     goals=["rpc"],
     brief="Before any of it is distributed, you have to be able to say what "
           "exists. A kind of machine, the machines that exist, the world they "
@@ -418,8 +466,8 @@ WORLD_BASICS = Assignment(
 )
 
 RPC_BASICS = Assignment(
-    name="t0-rpc",
-    title="Task 0: calls over a network",
+    name="a1-rpc",
+    title="Calls over a network",
     goals=["rpc", "failure"],
     brief="Before anything is distributed, one machine has to ask another for "
           "something. Find out what that costs, and what happens when it fails.",
@@ -438,8 +486,8 @@ RPC_BASICS = Assignment(
 )
 
 WORD_COUNT = Assignment(
-    name="t1-wordcount",
-    title="Task 1: word count",
+    name="a1-wordcount",
+    title="Word count",
     goals=["mapreduce", "implement", "independence", "cost"],
     brief="Count how often each word appears, ignoring case.",
     steps=[
@@ -471,13 +519,58 @@ WORD_COUNT = Assignment(
                          why="every pair you emit crosses the network")],
 )
 
+SEARCH_INDEX = Assignment(
+    name="a1-index",
+    title="A search index",
+    goals=["mapreduce", "implement", "independence", "cost", "locality"],
+    brief="For every word, the documents it appears in. A search engine "
+          "answers from a table like this one rather than by reading the "
+          "documents again.",
+    steps=[
+        "Write the mapper: it is given one document, and what it emits has "
+        "to say which document a word came from.",
+        "Write the reducer: it is given one word and everything emitted for "
+        "it, and produces that word's list of documents.",
+        "Make the list alphabetical, so the answer does not depend on which "
+        "mapper finished first.",
+        "Meet the network budget. It is below the number of words in the "
+        "input, so the thinning has to happen before the shuffle rather "
+        "than after it.",
+    ],
+    setup='mappers 3\nreducers 2\n'
+          'split notes: "the cat sat on the mat the cat"\n'
+          'split diary: "the dog ran the dog"\n'
+          'split manual: "the cat ran the cat ran"',
+    holdout='mappers 3\nreducers 2\n'
+            'split ledger: "red red blue red green red red blue"\n'
+            'split poster: "blue GREEN blue green blue"\n'
+            'split label: "red BLUE red red"',
+    expects=[Expectation("the", "diary manual notes"),
+             Expectation("cat", "manual notes"),
+             Expectation("ran", "diary manual"),
+             Expectation("dog", "diary")],
+    holdout_expects=[Expectation("blue", "label ledger poster"),
+                     Expectation("red", "label ledger"),
+                     Expectation("green", "ledger poster")],
+    requires=[Requirement(
+        "every reducer gets work", "all_reducers_used",
+        why="that is what partition is for")],
+    # 19 pairs if every occurrence is emitted, 11 if each document sends a
+    # word once. The budget sits between, so it can only be met by emitting
+    # a word once per document — and the same is true of the held-out input,
+    # where the two numbers are 17 and 7.
+    budgets=[BudgetLimit("network", "<=", 14,
+                         why="emitting every occurrence costs 19")],
+)
+
+
 COMBINER = Assignment(
-    name="t2-combiner",
-    title="Task 2: add a combiner",
+    name="extra-combiner",
+    title="Adding a combiner",
     goals=["locality", "combiner", "cost", "latency"],
     brief="Same answer, far less network traffic.",
     steps=[
-        "Bring your mapper and reducer across from Task 1.",
+        "Bring your mapper and reducer across from the word count.",
         "Add a combiner, which aggregates a mapper's own pairs before the "
         "shuffle.",
         "Check that the network metric falls while the counts stay "
@@ -508,8 +601,8 @@ COMBINER = Assignment(
 
 
 SPARK_MEMORY = Assignment(
-    name="t3-spark",
-    title="Task 3: keeping data in memory",
+    name="a2-wordcount",
+    title="Word count, kept in memory",
     goals=["locality", "cost"],
     brief="MapReduce writes to disk between stages. Spark keeps the data "
           "and remembers how it was made, so a lost partition is recomputed "
@@ -521,12 +614,12 @@ SPARK_MEMORY = Assignment(
         "Lose an earlier step, and see how much more has to be rebuilt.",
         "Make one executor slow, and find the straggler on the timeline.",
     ],
-    dialect="rpc",
+    dialect="spark",
 )
 
 CLOCKS = Assignment(
-    name="t4-clocks",
-    title="Task 4: what happened before what",
+    name="a3-vector",
+    title="What happened before what",
     goals=["causality"],
     brief="With no shared clock, the only order anyone can know is the one "
           "messages create. Everything else is concurrent.",
@@ -540,8 +633,8 @@ CLOCKS = Assignment(
 )
 
 MR_OVER_RPC = Assignment(
-    name="t5-mr-rpc",
-    title="Task 3: map and reduce on separate servers",
+    name="a1-servers",
+    title="Map and reduce on separate servers",
     goals=["rpc", "failure", "mapreduce", "locality"],
     brief="The same word count as Task 1, except the map and the reduce now "
           "live on different machines and the client has to ask each of them "
@@ -562,8 +655,8 @@ MR_OVER_RPC = Assignment(
 )
 
 TELEMETRY = Assignment(
-    name="t6-telemetry",
-    title="Task 2: finding the shuffle",
+    name="a2-telemetry",
+    title="Finding the shuffle",
     goals=["locality", "cost"],
     brief="Readings arrive one row per sensor; the question is per room. "
           "Somewhere in between, every reading for a room has to reach the "
@@ -575,12 +668,12 @@ TELEMETRY = Assignment(
         "what has to be rebuilt.",
         "Make one executor slow, and find the straggler on the timeline.",
     ],
-    dialect="rpc",
+    dialect="spark",
 )
 
 KMEANS = Assignment(
-    name="t7-kmeans",
-    title="Task 3: the same points, round after round",
+    name="a2-kmeans",
+    title="The same points, round after round",
     goals=["latency", "cost", "locality"],
     brief="k-means repeats one pass until it settles. Assigning points needs "
           "no coordination; recomputing the centroids needs all of them. "
@@ -596,12 +689,12 @@ KMEANS = Assignment(
         "Make an executor unreliable and run it a few times. Compare what a "
         "lost partition costs against a lost mapper in Task 1.",
     ],
-    dialect="rpc",
+    dialect="spark",
 )
 
 LAMPORT = Assignment(
-    name="t8-lamport",
-    title="Task 1: one number per process",
+    name="a3-lamport",
+    title="One number per process",
     goals=["causality"],
     brief="A Lamport timestamp guarantees that if a happened before b then "
           "L(a) < L(b). It does not guarantee the converse, and seeing where "
@@ -617,8 +710,8 @@ LAMPORT = Assignment(
 )
 
 BUFFERING = Assignment(
-    name="t9-buffering",
-    title="Task 2.2: delivering messages in order",
+    name="a3-buffering",
+    title="Delivering messages in order",
     goals=["causality"],
     brief="A vector clock says which messages depend on which. It does not "
           "stop one being shown before the message it answers — that takes a "
@@ -635,8 +728,29 @@ BUFFERING = Assignment(
     dialect="rpc",
 )
 
+INTERFACES = Assignment(
+    name="a1-talking",
+    title="How machines talk: RPC, REST and messaging",
+    goals=["rpc"],
+    brief="One question, asked three ways. Two of the three look the same on "
+          "the diagram and are the same in what they cost the caller; the "
+          "third does not wait for anybody.",
+    steps=[
+        "Run it as given, and find the three interactions on the timeline.",
+        "Compare the RPC call and the REST call. The contract is a signature "
+        "in one and an address in the other — say which of those two "
+        "differences the diagram can see.",
+        "Give the queue a reader, so the message that was sent to nobody "
+        "finally reaches something.",
+        "Make the bank slow. Two of the three interactions get slower with "
+        "it, and one does not.",
+    ],
+    dialect="rpc",
+)
+
 ASSIGNMENTS = {a.name: a for a in (
-    WORLD_BASICS, RPC_BASICS, WORD_COUNT, COMBINER, MR_OVER_RPC,
+    WORLD_BASICS, WORD_COUNT, SEARCH_INDEX, INTERFACES, RPC_BASICS,
+    MR_OVER_RPC, COMBINER,
     SPARK_MEMORY, TELEMETRY, KMEANS,
     LAMPORT, CLOCKS, BUFFERING)}
 

@@ -20,7 +20,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 WEB = ["index.html", "app.js", "lang.js", "examples.js", "style.css"]
 MODULES = ["__init__", "values", "core", "patterns", "types", "expr", "grammar",
            "syntax", "runtime", "project", "notation", "notation_mr",
-           "notation_spark", "metrics", "contest", "shapes", "attest",
+           "notation_spark", "pyspark", "metrics", "contest", "shapes", "attest",
            "langserver"]
 
 # Held-out literals, stripped from the student-facing copy.
@@ -183,7 +183,7 @@ def main(target: str) -> int:
 
     print(f"synced {len(tasks)} task file(s),  {len(WEB)} page file(s) and {len(MODULES) + 1} module(s) "
           f"to {dest}")
-    print("held-out data stripped — nothing in app/ reveals the answers")
+    print("held-out data stripped; nothing in app/ reveals the answers")
     return 0
 
 

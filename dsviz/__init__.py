@@ -19,7 +19,7 @@ from .metrics import compare, measure, report
 from .notation import Diagnostic, NotationError, build, lint, typecheck
 from .patterns import (Lineage, VectorClockRun, hash_partition, map_reduce,
                        normalize_inputs, spark_job)
-from .shapes import Frame, Shape, dataflow, gantt, spacetime
+from .shapes import Frame, Shape, dataflow, gantt, lineage, spacetime
 from .types import SymbolTable, Type
 
 __all__ = [
@@ -35,5 +35,5 @@ __all__ = [
     "measure", "report", "compare",
     "Judge", "Case", "Verdict", "Submission", "judge_notation",
     # rendering
-    "Frame", "Shape", "dataflow", "spacetime", "gantt",
+    "Frame", "Shape", "dataflow", "spacetime", "gantt", "lineage",
 ]

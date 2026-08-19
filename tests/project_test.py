@@ -39,14 +39,14 @@ world.run(job)
 ''',
 }
 
-r = json.loads(analyse_project(FILES, "main", "t1-wordcount"))
+r = json.loads(analyse_project(FILES, "main", "a1-wordcount"))
 assert not [d for d in r["diagnostics"] if d["severity"] == "error"], r["diagnostics"]
 assert r["verdict"]["verdict"] == "AC", r["verdict"]
 print("ok a helper in another file is usable from main")
 
 # A mistake must point at the file the student is editing.
 broken = dict(FILES, helpers="def clean(text: string) -> [string]:\n    return lower(text)\n")
-errs = [d for d in json.loads(analyse_project(broken, "main", "t1-wordcount"))["diagnostics"]
+errs = [d for d in json.loads(analyse_project(broken, "main", "a1-wordcount"))["diagnostics"]
         if d["severity"] == "error"]
 assert errs and errs[0]["file"] == "helpers" and errs[0]["line"] == 2, errs
 print("ok an error in a helper is reported against that file and line")

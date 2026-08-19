@@ -49,24 +49,24 @@ version = "0"
 
 [tool.dsviz]
 title = "Assignment 2"
-tasks = ["t3-spark", "t6-telemetry", "t7-kmeans"]
+tasks = ["a2-wordcount", "a2-telemetry", "a2-kmeans"]
 
 [tool.dsviz.titles]
-"t3-spark" = "Task 1: word count in Spark"
+"a2-wordcount" = "Task 1: word count in Spark"
 ''')
     ok("an exercise offers only its own tasks",
-       exercise.task_names(spark) == ["t3-spark", "t6-telemetry", "t7-kmeans"],
+       exercise.task_names(spark) == ["a2-wordcount", "a2-telemetry", "a2-kmeans"],
        str(exercise.task_names(spark)))
     ok("another exercise's task is not offered",
-       "t1-wordcount" not in exercise.task_names(spark))
+       "a1-wordcount" not in exercise.task_names(spark))
     ok("declared order is kept",
-       exercise.task_names(spark)[0] == "t3-spark",
+       exercise.task_names(spark)[0] == "a2-wordcount",
        "the dropdown reads in the order the exercise wrote")
     ok("an exercise can renumber a task",
-       exercise.title_for(spark, "t3-spark", "x") == "Task 1: word count in Spark")
+       exercise.title_for(spark, "a2-wordcount", "x") == "Task 1: word count in Spark")
     ok("a task it did not rename keeps the package's title",
-       exercise.title_for(spark, "t6-telemetry", ASSIGNMENTS["t6-telemetry"].title)
-       == ASSIGNMENTS["t6-telemetry"].title)
+       exercise.title_for(spark, "a2-telemetry", ASSIGNMENTS["a2-telemetry"].title)
+       == ASSIGNMENTS["a2-telemetry"].title)
 
     # A name the package no longer has must not take the editor down with it;
     # it is dropped, and `dsviz tasks` is where it surfaces.
@@ -76,10 +76,10 @@ name = "assignment-x"
 version = "0"
 
 [tool.dsviz]
-tasks = ["t3-spark", "t99-does-not-exist"]
+tasks = ["a2-wordcount", "t99-does-not-exist"]
 ''')
     ok("a task that no longer exists is dropped, not raised",
-       exercise.task_names(stale) == ["t3-spark"])
+       exercise.task_names(stale) == ["a2-wordcount"])
     ok("and is reported so it can be fixed",
        exercise.unknown_tasks(stale) == ["t99-does-not-exist"])
 
@@ -96,15 +96,15 @@ name = "a"
 version = "0"
 
 [tool.dsviz]
-tasks = ["t4-clocks"]
+tasks = ["a3-vector"]
 
 [tool.dsviz.titles]
-"t4-clocks" = 'Task 2: "happened before" — and what it cannot tell you'
+"a3-vector" = 'Task 2: "happened before" — and what it cannot tell you'
 ''')
     round_trip = json.loads(json.dumps(exercise.titles(quoted)))
     ok("a heading with quotes and dashes survives the trip to the page",
-       round_trip["t4-clocks"].startswith('Task 2: "happened before"'),
-       round_trip["t4-clocks"])
+       round_trip["a3-vector"].startswith('Task 2: "happened before"'),
+       round_trip["a3-vector"])
 
     # The tabs the editor opens on must be scoped the same way the dropdown
     # is, or the scoping is cosmetic.
@@ -113,7 +113,7 @@ tasks = ["t4-clocks"]
     seeded = cli.seed(spark)
     starters = sorted(n for n in seeded if n.endswith(".ds"))
     ok("the workspace opens on this exercise's tasks only",
-       starters == ["t3-spark.ds", "t6-telemetry.ds", "t7-kmeans.ds"],
+       starters == sorted(["a2-wordcount.ds", "a2-telemetry.ds", "a2-kmeans.ds"]),
        ", ".join(starters))
     ok("data files come regardless of which task reads them",
        any(not n.endswith(".ds") for n in seeded),

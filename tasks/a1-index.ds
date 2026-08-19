@@ -1,0 +1,43 @@
+# Task 2 - a search index.
+#
+# A search engine does not scan every document when you type a word. It
+# has already been told, for every word, which documents contain it. That
+# table is the index, and building one is a MapReduce.
+#
+# For each word in the input, produce the names of the documents it
+# appears in: alphabetical, separated by single spaces, each document
+# named once however often the word occurs in it.
+#
+# Three things make this harder than counting.
+#
+#   * the value a pair carries is no longer a number, and the job's types
+#     follow whatever you write in your signatures
+#   * the answer must not depend on which mapper finished first
+#   * the network budget is smaller than the number of words in the
+#     input, so the pairs have to be thinned out before the shuffle
+#
+# Ignore case, as in Task 1. Press ctrl/cmd + K for the reference.
+
+@mapper
+class Worker:
+    pass
+
+@reducer
+class Collector:
+    pass
+
+m1 = Worker(speed=1.0)
+m2 = Worker(speed=1.0)
+m3 = Worker(speed=1.0)
+r1 = Collector(speed=1.0)
+r2 = Collector(speed=1.0)
+
+world = World(machines=[m1, m2, m3, r1, r2])
+
+# --- your code -------------------------------------------------------
+# The mapper is given one document: its name, and its text. The reducer
+# is given one word and everything emitted for it. Write the three
+# functions here, then run the job in the world:
+#
+#     job = MapReduce(map=..., reduce=..., partition=...)
+#     world.run(job)

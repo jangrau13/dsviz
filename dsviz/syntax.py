@@ -168,6 +168,13 @@ class Rdd:
     op: str
     parents: list = field(default_factory=list)
     line: int = 0
+    # Every call in the chain, as (operation, [argument source]). The argument
+    # is kept as the text the student wrote, because what it means is Python's
+    # to say: a lambda is handed to Python's own parser rather than being
+    # re-derived from a tree that only approximates one. Keeping only the last
+    # operation's name — which is all this held before — meant a pipeline could
+    # not be run at all, so nothing checked whether it computed anything.
+    steps: list = field(default_factory=list)
 
 
 @dataclass
@@ -245,6 +252,12 @@ class Job:
     # are the same decision — what to run, and what to run it on.
     settings: dict = field(default_factory=dict)
     line: int = 0
+    # A PySpark job is handed its pipeline as a block of real PySpark rather
+    # than as a set of roles. The text is kept verbatim, with the line it
+    # starts on, so a diagnostic inside the block lands on the line the
+    # student is actually looking at.
+    source: str = ""
+    source_line: int = 0
 
 
 @dataclass
@@ -258,6 +271,7 @@ class Module:
     instances: dict = field(default_factory=dict)   # fast = Worker(speed=1.0)
     worlds: dict = field(default_factory=dict)      # world = World(machines=[…])
     runs: list = field(default_factory=list)        # world.run(job)
+    inputs: dict = field(default_factory=dict)      # input rows: "…" | "…"
 
     def machines(self) -> dict:
         """Instances whose class is one of `kinds`, by the name they were given."""
@@ -285,6 +299,35 @@ def _params(text: str, line: int, diags: list) -> tuple[list, list]:
         names.append(name.strip())
         types.append(t.strip())
     return names, types
+
+
+LOCAL_ASSIGN_RE = re.compile(r"^(\s+)(?P<var>\w+)\s*=\s*\S")
+
+
+def _untyped_local(lines: list[str], line: int) -> tuple[int, str] | None:
+    """
+    The line before a syntax error, when it is a local without a type.
+
+    Inside a function every name carries a written type, and `chf = bank.
+    balance("alice")` does not. What the grammar says about it is "syntax
+    error here, expected 'if'": the line is right, the advice is about a
+    keyword nobody was reaching for, and the missing thing — a type — is not
+    mentioned. Saying so costs one regex.
+
+    The search runs backwards from the reported line, because a statement
+    that cannot be ended is sometimes only noticed on the next one.
+
+    Only indented lines qualify: at the top level `bank = Bank()` is how a
+    machine is made, and has no type on purpose.
+    """
+    for at in range(min(line, len(lines)), 0, -1):
+        text = lines[at - 1]
+        if not text.strip() or text.strip().startswith("#"):
+            continue
+        m = LOCAL_ASSIGN_RE.match(text)
+        return (at, m.group("var")) if m and ":" not in text.split("=")[0] \
+            else None
+    return None
 
 
 def parse(source: str) -> tuple[Module, list[Diagnostic]]:
@@ -438,6 +481,21 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
             out.append((indent, text.strip(), n))
         return out
 
+    def receiver(call):
+        """The bare name a method was called on, or "" if it was called on an
+        expression.
+
+        `bank.balance("savings")` is an RPC because `bank` names something in
+        the program. `row.split(" ")` has the identical shape and is not: it
+        is a string method inside a lambda. The grammar states the shape once
+        and the difference is decided here, on whether the receiver is a plain
+        name at all.
+        """
+        target = call.children[0]
+        if isinstance(target, Token):
+            return _tok(target)
+        return _tok(target.children[0]) if getattr(target, "data", None) == "var" else ""
+
     def calls_in(node) -> list:
         """Every `Target.method(...)` inside a def, in source order."""
         # `chf: int = bank.balance("savings")` — remember the name, so the
@@ -449,7 +507,9 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
 
         found = []
         for call in node.find_data("remote_call"):
-            target, method = call.children[0], call.children[1]
+            target, method = receiver(call), call.children[1]
+            if not target:
+                continue                  # a method on an expression, not a call out
             arglist = next((c for c in call.children[2:]
                             if getattr(c, "data", None) == "args"), None)
             args, options = [], {}
@@ -459,7 +519,7 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
                     options[_tok(key)] = _literal(value)
                 else:
                     args.append(_literal(child))
-            found.append(RemoteCall(_tok(target), _tok(method), args, options,
+            found.append(RemoteCall(target, _tok(method), args, options,
                                     position(call)[0], bound.get(id(call), "")))
         return sorted(found, key=lambda c: c.line)
 
@@ -510,6 +570,28 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
                     cls.methods[m.name] = m
         mod.classes[cls.name] = cls
 
+    def arg_sources(call) -> list:
+        """Each argument of a call, as the text the student wrote.
+
+        Sliced out of the source rather than rebuilt from the tree: a lambda
+        body is Python, and the only thing that reads Python correctly is
+        Python. The grammar's job is to say where the argument ends.
+        """
+        arglist = next((c for c in call.children[1:]
+                        if getattr(c, "data", None) == "args"), None)
+        if arglist is None:
+            return []
+        out = []
+        for child in arglist.children:
+            meta = getattr(child, "meta", None)
+            if meta is not None and not getattr(meta, "empty", True):
+                out.append(source[meta.start_pos:meta.end_pos])
+            elif isinstance(child, Token):
+                out.append(str(child))
+            else:
+                out.append(_tok(child))
+        return out
+
     def add_assign(node) -> bool:
         """
         `x = Something(...)` — either a machine or a job.
@@ -544,13 +626,16 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
         if kind not in mod.classes and (chain is not None
                                         or getattr(call, "data", None) == "source_ref"
                                         or kind in RDD_SOURCES):
-            parents, op = [], kind
+            parents, op, steps = [], kind, []
             if getattr(call, "data", None) == "source_ref":
                 parents = [_tok(call.children[0])]
                 op = "source"
+            else:
+                steps.append((kind, arg_sources(call)))
             for step in (chain.children if chain is not None else []):
                 op = _tok(step.children[0])
-            mod.rdds.append(Rdd(var, op, parents, position(node)[0]))
+                steps.append((op, arg_sources(step)))
+            mod.rdds.append(Rdd(var, op, parents, position(node)[0], steps))
             return True
 
         if kind in mod.classes:
@@ -569,6 +654,8 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
         """`job = MapReduce(map=tokenize, ...)` — the visible wiring."""
         arglist = next((c for c in call.children[1:]
                         if getattr(c, "data", None) == "args"), None)
+        if kind == "PySpark":
+            return add_pyspark(node, var, arglist)
         roles, settings = {}, {}
         for child in (arglist.children if arglist is not None else []):
             if getattr(child, "data", None) != "kwarg":
@@ -585,6 +672,33 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
         mod.jobs.append(Job(var, kind, roles, settings, position(node)[0]))
         return True
 
+    def add_pyspark(node, var, arglist) -> bool:
+        """
+        `job = PySpark(\"\"\"…\"\"\", lose="counts")` — a pipeline written in
+        real PySpark.
+
+        The block arrives as one STRING token, so the line it starts on is the
+        token's own line. Everything inside is read by `pyspark.py`, and every
+        diagnostic it produces is shifted by that offset — otherwise the editor
+        would underline line 3 of a string nobody can see.
+        """
+        block, block_line, settings = "", position(node)[0], {}
+        for child in (arglist.children if arglist is not None else []):
+            if getattr(child, "data", None) == "kwarg":
+                key, value = child.children
+                settings[_tok(key)] = _literal(value)
+            elif getattr(child, "data", None) == "string" and not block:
+                token = child.children[0]
+                raw = _tok(token)
+                block_line = (token.line or block_line) if hasattr(token, "line") \
+                    else block_line
+                block = raw[3:-3] if raw.startswith('\"\"\"') else raw.strip('"')
+        if not block:
+            return False
+        mod.jobs.append(Job(var, "PySpark", {}, settings, position(node)[0],
+                            source=block, source_line=block_line))
+        return True
+
     deferred = []          # assignments, handled once every class is known
 
     def add(node, decorators):
@@ -599,6 +713,19 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
             # whether its callee is a class, and `world.run(job)` has to know
             # what `world` and `job` are.
             deferred.append(node)
+        elif kind in ("input_decl", "split_decl"):
+            # The keyword is a token of the rule, so the name is the first
+            # NAME rather than the first child.
+            names = [c for c in node.children
+                     if isinstance(c, Token) and c.type == "NAME"]
+            texts = [c for c in node.children
+                     if isinstance(c, Token) and c.type == "STRING"]
+            lists = [c for c in node.children
+                     if getattr(c, "data", None) == "string_list"]
+            if names:
+                rows = ([_tok(t).strip('"') for t in lists[0].children]
+                        if lists else [_tok(t).strip('"') for t in texts])
+                mod.inputs[_tok(names[0])] = rows
         else:
             mod.statements.append((_tok(node), position(node)[0]))
 
@@ -607,6 +734,20 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
     except Exception as e:
         line = getattr(e, "line", 1) or 1
         col = getattr(e, "column", 1) or 1
+        # A pipeline line gets a pipeline's answer. "syntax error here" is
+        # what the grammar knows; on a line carrying a lambda it is not enough
+        # to act on, and Python can say exactly what is wrong.
+        from .pyspark import explain
+        better = explain(lines[line - 1] if line <= len(lines) else "", line, col)
+        if better is not None:
+            return mod, [better]
+        named = _untyped_local(lines, line)
+        if named is not None:
+            at, var = named
+            return mod, [Diagnostic(
+                at, 1, "error",
+                f"{var} is given a value but never a type",
+                hint=f"write the type you expect, e.g. {var}: int = ...")]
         return mod, [Diagnostic(line, col, "error", "syntax error here",
                                 hint="check the line above this one too")]
 

@@ -63,7 +63,7 @@ malicious = (
     "reduce(key, values):\n"
     "    sum(values)\n"
 )
-result = json.loads(judge_assignment("t1-wordcount", malicious, True))
+result = json.loads(judge_assignment("a1-wordcount", malicious, True))
 # It must NOT crash the grader with an executed escape; it must fail as a normal
 # wrong/errored submission with a verdict, never AC.
 assert result["verdict"] != "AC", "malicious submission must not pass grading"

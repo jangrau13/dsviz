@@ -29,10 +29,14 @@ MAPREDUCE, SPARK, RPC, CLOCKS = "mapreduce", "spark", "rpc", "clocks"
 def detect_dialect(source: str) -> str:
     """Pick the exercise from what the program actually contains."""
     import re
+    # A pipeline is what makes a program a Spark program, not the absence of
+    # machines: a Spark job declares executors with `@machine` exactly like
+    # every other job, so testing for that first classified all three Spark
+    # tasks as RPC and offered their editors the wrong completions.
+    if re.search(r"\b(textFile|parallelize)\s*\(|\bSpark\s*\(", source, re.M):
+        return SPARK
     if re.search(r"^\s*@machine\b", source, re.M):
         return RPC
-    if re.search(r"^\s*(executors\b|input\s+\w+\s*:)|textFile\s*\(", source, re.I | re.M):
-        return SPARK
     if re.search(r"^\s*@process\b|\.clock\s*==|\->>", source, re.M):
         return CLOCKS
     return MAPREDUCE
@@ -249,36 +253,67 @@ DOCS: list[SymbolDoc] = [
               (MAPREDUCE, SPARK, RPC, CLOCKS), "note the shuffle starts here"),
 
     # --- Spark pipelines ---
-    SymbolDoc("textFile", "textFile(input)", "Create an RDD from input.",
-              "The start of every pipeline.", (SPARK,),
-              "rows = textFile(readings)"),
-    SymbolDoc("flatMap", ".flatMap(expr)", "One record in, many out.",
+    # The functions are real PySpark lambdas. There is no SparkContext to
+    # write: the executors are the machines the world was given, and the data
+    # is what the pipeline reads, so the context is already on the page.
+    SymbolDoc("textFile", "textFile(name)", "Read input into an RDD.",
+              "The start of a pipeline. The name is an input the program "
+              "declares or a file the task ships.",
+              (SPARK,), 'departures = textFile("departures.csv")'),
+    SymbolDoc("parallelize", "parallelize([...])", "Make an RDD from a list.",
+              "Useful when the data is short enough to write down.",
+              (SPARK,), 'stops = parallelize(["bern,4", "chur,0"])'),
+    SymbolDoc("map", ".map(lambda x: ...)", "One record in, one out.",
               "Narrow, so it needs no shuffle and pipelines inside the "
               "current stage.",
-              (SPARK,), "rows.flatMap(split(value))"),
-    SymbolDoc("mapToPair", ".mapToPair(key, value)", "Turn records into pairs.",
-              "Narrow. It produces a pair RDD, which is what the byKey "
-              "operations need.", (SPARK,), "rows.mapToPair(value, 1)"),
-    SymbolDoc("reduceByKey", ".reduceByKey(a + b)", "Combine values per key.",
-              "Wide, so it forces a shuffle and begins a new stage. It "
-              "combines on the map side first, which groupByKey does not.",
-              (SPARK,), "readings.reduceByKey(a + b)"),
-    SymbolDoc("groupByKey", ".groupByKey()", "Gather all values per key.",
-              "Wide, and it ships everything. reduceByKey moves less data "
-              "for the same answer.",
-              (SPARK,), "readings.groupByKey()"),
-    SymbolDoc("filter", ".filter(expr)", "Keep records matching a condition.",
-              "Narrow.", (SPARK,), "totals.filter(value > 1)"),
+              (SPARK,), 'rows.map(lambda row: row.split(","))'),
+    SymbolDoc("flatMap", ".flatMap(lambda x: [...])", "One record in, many out.",
+              "Narrow. The function returns a list, and every element of it "
+              "becomes a record of its own.",
+              (SPARK,), 'rows.flatMap(lambda row: row.split(","))'),
+    SymbolDoc("filter", ".filter(lambda x: ...)", "Keep records that match.",
+              "Narrow, and the cheapest thing you can do before a wide step: "
+              "every record it drops is one the shuffle does not carry.",
+              (SPARK,), 'delays.filter(lambda d: int(d) > 0)'),
+    SymbolDoc("mapValues", ".mapValues(lambda v: ...)", "Change values, keep keys.",
+              "Narrow. It leaves the key alone, so nothing has to move.",
+              (SPARK,), "grouped.mapValues(lambda xs: sum(xs) / len(xs))"),
+    SymbolDoc("reduceByKey", ".reduceByKey(lambda a, b: ...)",
+              "Combine values per key.",
+              "Wide: it forces a shuffle and begins a new stage. It combines "
+              "on the map side first, so only one partial result per key "
+              "crosses the network — which is what groupByKey does not do.",
+              (SPARK,), "byStop.reduceByKey(lambda a, b: a + b)"),
+    SymbolDoc("groupByKey", ".groupByKey()", "Gather every value per key.",
+              "Wide, and it ships every record. reduceByKey reaches the same "
+              "answer while moving far less, so prefer it when you can.",
+              (SPARK,), "byStop.groupByKey()"),
+    SymbolDoc("sortByKey", ".sortByKey()", "Order the records by key.",
+              "Wide: an order across the whole RDD cannot be decided inside "
+              "one partition.", (SPARK,), "totals.sortByKey()"),
+    SymbolDoc("distinct", ".distinct()", "Drop repeated records.",
+              "Wide, because two equal records may sit on different machines.",
+              (SPARK,), "stops.distinct()"),
+    SymbolDoc("join", ".join(other)", "Match two pair RDDs on their keys.",
+              "Wide: both sides have to be brought together by key.",
+              (SPARK,), "delays.join(platforms)"),
+    SymbolDoc("partitionBy", ".partitionBy(lambda k: ...)",
+              "Choose which partition a key goes to.",
+              "Wide. Deciding the split yourself is how you keep everything "
+              "that must be compared together on one machine — and how you "
+              "cause skew if the function is a poor one.",
+              (SPARK,), "byStop.partitionBy(lambda k: hash(k))"),
     SymbolDoc("cache", ".cache()", "Keep this RDD in memory.",
-              "Without it, every action recomputes the whole lineage.",
-              (SPARK,), "totals.cache()"),
-    SymbolDoc("collect", ".collect()", "An action: bring results back.",
-              "Spark is lazy, so nothing runs until an action asks for a "
-              "result.",
-              (SPARK,), "totals.collect()"),
-    SymbolDoc("lose", "lose RDD", "Lose a cached partition.",
-              "Shows recomputation from lineage, which is what Spark does "
-              "and MapReduce cannot.", (SPARK,), "lose totals"),
+              "Without it, an RDD read by two branches is computed twice: "
+              "the lineage is replayed for each. That is what makes an "
+              "iterative job expensive.",
+              (SPARK,), "kept = rows.cache()"),
+    SymbolDoc("Spark", "job = Spark(pipeline=rdd, lose=rdd)",
+              "The job to run in the world.",
+              "`pipeline` names the last step, which is what forces the "
+              "whole lineage to run. `lose` throws a step away so you can "
+              "watch it rebuilt from lineage rather than reloaded.",
+              (SPARK,), "job = Spark(pipeline=totals, lose=byStop)"),
 
     # --- clocks ---
     SymbolDoc("assert", "assert P.clock == [..]", "Check a claimed clock.",
@@ -314,8 +349,9 @@ GROUPS = [
      ["send", "broadcast", "late", "clock", "delivery"]),
     ("datasets", "Datasets",
      "Values built from other values, and what is remembered about how.",
-     ["textFile", "flatMap", "mapToPair", "reduceByKey", "groupByKey",
-      "filter", "cache", "collect", "lose"]),
+     ["textFile", "parallelize", "map", "flatMap", "filter", "mapValues",
+      "reduceByKey", "groupByKey", "sortByKey", "distinct", "join",
+      "partitionBy", "cache", "Spark"]),
     ("checks", "Checks", "Statements that assert something about a run.",
      ["budget", "expect", "assert", "note"]),
 ]
@@ -368,6 +404,23 @@ BUILTIN_HELP = {
              "and JavaScript use the same 31-hash, so a number computed here "
              "matches one computed there.",
              'hash("zurich")'),
+    "sort": ("The same values, in alphabetical order.",
+             "Sorting is what makes an answer reproducible: the values reach "
+             "a reducer in whatever order the network delivered them, so two "
+             "runs of the same correct code can otherwise disagree about how "
+             "the answer is written down.",
+             'sort(["chur", "bern"])   # ["bern", "chur"]'),
+    "join": ("Several strings written out as one.",
+             "The separator goes between the pieces and not at either end, "
+             "so joining nothing gives the empty string and joining one "
+             "value gives that value back.",
+             'join(["bern", "chur"], ", ")   # "bern, chur"'),
+    "unique": ("Each value once, in the order it first appeared.",
+               "Repeats are dropped and the first of each is kept, so the "
+               "result is the same on every run. It does not sort: the order "
+               "you get is the order the values arrived in, which is "
+               "something you can reason about.",
+               'for city: string in unique(arrivals):'),
     "abs": ("The size of a number, ignoring its sign.",
             "Returns the number without its sign, so -7 and 7 both give 7.",
             'abs(-7)                 # 7'),
@@ -423,9 +476,27 @@ def syntax_check(source: str) -> list[Diagnostic]:
         if accepts:
             words = sorted(_readable(t) for t in list(accepts)[:6])
             expected = "expected " + ", ".join(w for w in words if w)
-        return [Diagnostic(getattr(e, "line", 1) or 1,
-                           getattr(e, "column", 1) or 1,
-                           "error", "syntax error here", expected)]
+        line = getattr(e, "line", 1) or 1
+        column = getattr(e, "column", 1) or 1
+        # On a line carrying a lambda, "syntax error here" names the wrong
+        # authority. The functions a transformation takes are Python, so
+        # Python is asked what is wrong with them.
+        from .pyspark import explain
+        lines = source.splitlines()
+        better = explain(lines[line - 1] if line <= len(lines) else "",
+                         line, column)
+        if better is not None:
+            return [better]
+        # The editor is where this matters most: the squiggle is already on
+        # the right line, and "expected 'if'" is what it says about it.
+        from .syntax import _untyped_local
+        named = _untyped_local(lines, line)
+        if named is not None:
+            at, var = named
+            return [Diagnostic(at, 1, "error",
+                               f"{var} is given a value but never a type",
+                               f"write the type you expect, e.g. {var}: int = ...")]
+        return [Diagnostic(line, column, "error", "syntax error here", expected)]
     except Exception as e:                      # grammar bugs must not hide
         return [Diagnostic(1, 1, "error", f"could not parse: {e}", "")]
 
@@ -527,10 +598,8 @@ def _analyse_assignment(spec, student_source: str) -> str:
 
     # Each task names its own dialect, so an RPC task is not fed through the
     # MapReduce checker.
-    if spec.dialect == RPC:
+    if spec.dialect in (RPC, CLOCKS, SPARK):
         linter, builder = lint_rpc, lambda s: build_rpc(s)
-    elif spec.dialect == SPARK:
-        linter, builder = lint_spark, lambda s: build_spark(s)[0]
     else:
         linter, builder = lint_mr, lambda s: build_mr(s)[0]
 
@@ -574,7 +643,7 @@ def _analyse_dialect(source: str, dialect: str, result: Analysis) -> Analysis:
     # `cannot parse: '@process'` against every line of a file that is perfectly
     # valid — fourteen errors in a program with none. The dialect names the
     # exercise, not a separate front end.
-    if dialect in (RPC, CLOCKS):
+    if dialect in (RPC, CLOCKS, SPARK):
         from .runtime import build
         from .syntax import lint as lint_program
 
@@ -583,23 +652,10 @@ def _analyse_dialect(source: str, dialect: str, result: Analysis) -> Analysis:
         if any(d.severity == "error" for d in diags):
             return result
         cluster = build(source)
-
-    elif dialect == SPARK:
-        from .notation_spark import build_spark, lint_spark
-        diags = lint_spark(source)
-        result.diagnostics = [d.to_json() for d in diags]
-        if any(d.severity == "error" for d in diags):
-            return result
-        cluster, lineage, rdds, expects, budgets = build_spark(source)
-        result.outputs = {k: _preview(v) for k, v in rdds.items()}
-
-
-        result.outputs = {k: str(v) for k, v in run.clocks.items()}
-        trace = cluster.sorted_trace()
-        result.frame = spacetime(trace, title="").to_json()
-        result.gantt = gantt(trace, title="").to_json()
-        result.metrics = _metrics_json(measure(trace))
-        return result
+        # What the pipeline noticed while running: a reducer that would not
+        # survive being split across partitions is reported at its own line.
+        for warning in getattr(getattr(cluster, "pipeline", None), "warnings", []):
+            result.diagnostics.append(warning.to_json())
 
     else:
         from .notation_mr import build_mr, judge_mr, lint_mr
@@ -616,6 +672,11 @@ def _analyse_dialect(source: str, dialect: str, result: Analysis) -> Analysis:
     result.frame = dataflow(trace, title="").to_json()
     result.gantt = gantt(trace, title="").to_json()
     result.metrics = _metrics_json(measure(trace))
+    # Whatever the run produced, whichever exercise produced it. This was set
+    # only on the MapReduce path, so a Spark pipeline computed its answer and
+    # then showed the student nothing.
+    result.outputs = {e.detail["key"]: e.detail["value"]
+                      for e in trace.of_kind("output")}
     return result
 
 

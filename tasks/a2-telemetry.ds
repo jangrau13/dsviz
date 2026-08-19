@@ -1,0 +1,53 @@
+# Task 2 - where the shuffle is, and what it costs.
+#
+# climate.csv is a year of room measurements in *long* form: one row per
+# reading, as
+#     timestamp,field,value
+# so a single moment in time occupies three rows — one for co2, one for
+# temperature, one for humidity. That is how the sensor wrote it, and it
+# is why the first thing any question needs is a step that brings the rows
+# belonging together onto one machine.
+#
+# The question here is per month: within a month, what was the sharpest
+# rise in co2 from one reading to the next, and the sharpest fall?
+#
+# Narrow steps keep each partition where it is. Wide steps cannot, and
+# every machine waits for the redistribution. On the diagram a wide step
+# is the one with a barrier in front of it.
+
+@machine
+class Executor:
+    pass
+
+e1 = Executor(speed=1.0)
+e2 = Executor(speed=1.0)
+e3 = Executor(speed=1.0)      # step 4: make it 0.3
+
+# --- the world -------------------------------------------------------
+
+world = World(machines=[e1, e2, e3])
+
+# --- the pipeline ----------------------------------------------------
+# Each line says what it came from. That is the lineage.
+
+readings = textFile("climate.csv")
+parsed = readings.map(lambda row: row.split(","))
+
+# Key each reading by the month it belongs to, carrying the hour so the
+# readings can be put back in order once they are together.
+byMonth = parsed.map(lambda f: (f[0].split("-")[1], (f[0].split("T")[1], f[1], float(f[2]))))
+together = byMonth.groupByKey()
+
+# Now every reading for a month is on one machine, so the month can be
+# looked at as a whole: keep co2, put it in time order, and measure each
+# step from one reading to the next.
+deltas = together.mapValues(lambda rs: [b[2] - a[2] for a, b in zip(sorted([r for r in rs if r[1] == "co2"])[:-1], sorted([r for r in rs if r[1] == "co2"])[1:])])
+swing = deltas.mapValues(lambda ds: (max(ds), min(ds)))
+
+# step 2: only co2 is ever used, but every temperature and humidity row was
+#         carried across the network to get here. Filter to co2 before the
+#         pair is built, and read what the shuffle carries now.
+
+job = Spark(pipeline=swing, lose=together)   # step 3: lose=byMonth
+
+world.run(job)

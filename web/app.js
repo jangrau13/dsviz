@@ -111,7 +111,7 @@ async function boot() {
   // loads to an ImportError, which no Python suite can see.
   const modules = ["__init__", "assets", "values", "core", "patterns", "types",
                    "expr", "grammar", "syntax", "runtime", "project",
-                   "notation", "notation_mr", "notation_spark", "metrics",
+                   "notation", "notation_mr", "notation_spark", "pyspark", "metrics",
                    "contest", "shapes", "assignment", "langserver"];
   pyodide.FS.mkdirTree("/home/pyodide/dsviz");
   for (const name of modules) {
@@ -297,7 +297,7 @@ function showFile(name) {
 
 function drawTabs() {
   const bar = $("files");
-  // Always shown, even for one file: a student editing `t1-wordcount.ds` should
+  // Always shown, even for one file: a student editing `a1-wordcount.ds` should
   // be able to see that is what they are editing. With one file there is
   // nothing to navigate, but there is still something to know.
   bar.hidden = files.size === 0;

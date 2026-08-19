@@ -72,7 +72,7 @@ def reduce(key: string, values: [int]) -> int:
 def partition(key: string, n: int) -> int:
     hash(key) mod n
 '''
-old = verdict("t1-wordcount", OLD, holdout=True)
+old = verdict("a1-wordcount", OLD, holdout=True)
 ok("binding roles by function name no longer works",
    old["verdict"] == "CE", f"{old['verdict']}: {old['cases'][0]['message'][:60]}")
 ok("and it scores nothing rather than most of it",
@@ -84,7 +84,7 @@ for omitted in ("map", "reduce", "partition"):
                        (("map", "tokenize"), ("reduce", "total"),
                         ("partition", "byKey")) if r != omitted)
     src = f"{FUNCS}\n{WORLD}\njob = MapReduce({wiring})\nworld.run(job)\n"
-    got = verdict("t1-wordcount", src)
+    got = verdict("a1-wordcount", src)
     ok(f"a job with no {omitted} is refused", got["verdict"] == "CE",
        got["cases"][0]["message"][:70])
 
@@ -97,7 +97,7 @@ for role in ("map", "reduce", "partition"):
         f"{r}=" + ("nosuch" if r == role else n) for r, n in
         (("map", "tokenize"), ("reduce", "total"), ("partition", "byKey")))
     src = f"{FUNCS}\n{WORLD}\njob = MapReduce({wiring})\nworld.run(job)\n"
-    got = verdict("t1-wordcount", src)
+    got = verdict("a1-wordcount", src)
     message = got["cases"][0]["message"]
     ok(f"a job naming no such function as the {role} is refused",
        got["verdict"] == "CE" and "nosuch" in message, message[:70])
@@ -106,14 +106,14 @@ for role in ("map", "reduce", "partition"):
 # function passed as the mapper may emit.
 STRAY = FUNCS + "\ndef alsoEmits(key: string, value: string) -> void:\n    emit(key, 1)\n"
 src = f"{STRAY}\n{WORLD}\njob = MapReduce(map=tokenize, reduce=total, partition=byKey)\nworld.run(job)\n"
-got = verdict("t1-wordcount", src)
+got = verdict("a1-wordcount", src)
 ok("a function that is not the mapper still may not emit",
    got["verdict"] == "CE" and "emit" in got["cases"][0]["message"],
    got["cases"][0]["message"][:70])
 
 # --- the complete thing still works -------------------------------------
 whole = f"{FUNCS}\n{WORLD}\njob = MapReduce(map=tokenize, reduce=total, partition=byKey)\nworld.run(job)\n"
-got = verdict("t1-wordcount", whole)
+got = verdict("a1-wordcount", whole)
 ok("a properly wired submission still passes", got["verdict"] == "AC",
    f"{got['score']:g}/{got['max_score']:g}")
 

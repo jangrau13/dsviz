@@ -1,4 +1,4 @@
-# Task 3 - the same work, kept in memory.
+# Task 1 - the same work, kept in memory.
 #
 # MapReduce writes to disk between every stage. Spark keeps the data and
 # remembers how it was produced. Those two facts are the whole difference.
@@ -6,6 +6,10 @@
 # The assignments below are the lineage: each step records what it was
 # made from. A lost step is not reloaded from disk, it is recomputed from
 # its ancestors, which is why the graph is worth keeping.
+#
+# The functions are real PySpark lambdas. There is no SparkContext to
+# write: the executors are the machines you declare, and the data is what
+# the pipeline reads, so the context is already on the page.
 
 @machine
 class Executor:
@@ -23,10 +27,10 @@ world = World(machines=[e1, e2, e3])
 # --- the pipeline ----------------------------------------------------
 # Each line says what it came from. That is the lineage.
 
-lines = textFile("chunk001.txt")
-words = lines.flatMap(split(value))
-pairs = words.mapToPair(value, 1)
-counts = pairs.reduceByKey(a + b)
+lines  = textFile("chunk001.txt")
+words  = lines.flatMap(lambda line: line.split(" "))
+pairs  = words.map(lambda word: (word, 1))
+counts = pairs.reduceByKey(lambda a, b: a + b)
 
 job = Spark(pipeline=counts, lose=counts)   # step 2: lose=pairs
 

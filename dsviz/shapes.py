@@ -537,3 +537,78 @@ def gantt(trace: Trace, *, title: str = "", row_gap: float = 0.9,
     # Fit last, once every shape is placed: a layout only manages the axis
     # it was written for, and this catches whatever is left over.
     return Frame(shapes, duration=trace.duration, title=title).fit()
+
+
+def lineage(trace: Trace, *, title: str = "", col_gap: float = 3.6,
+            row_gap: float = 1.15, box_w: float = 2.6, box_h: float = 0.72
+            ) -> Frame:
+    """
+    The RDD graph, laid out in stages.
+
+    This is the picture Spark is about and the one nothing else here drew:
+    `dataflow` draws machines and the messages between them, which answers
+    "who talked to whom" rather than "what was built from what". A student
+    asked to say which line caused a barrier has to be able to see the
+    barrier, and it is between two columns of this diagram.
+
+    One column per stage, left to right, each column stacked top-down in the
+    order the steps were built. Edges are routed by what they are: a step and
+    its parent in the same stage are joined vertically, because nothing moved;
+    an edge that crosses a column is a shuffle, drawn across and coloured,
+    because that is the expensive one and the whole reason to look.
+    """
+    steps = [e for e in trace if e.kind == "rdd"]
+    if not steps:
+        return Frame([], duration=0.0, title=title)
+
+    by_stage: dict = {}
+    for e in steps:
+        by_stage.setdefault(e.detail.get("stage", 0), []).append(e)
+
+    stages = sorted(by_stage)
+    tallest = max(len(members) for members in by_stage.values())
+    # Every column hangs from the same line, so the stage labels agree and a
+    # short column does not float in the middle of a tall one.
+    ceiling = (tallest - 1) * row_gap / 2
+
+    shapes, placed = [], {}
+    for column, stage in enumerate(stages):
+        x = column * col_gap
+        for row, e in enumerate(by_stage[stage]):
+            y = ceiling - row * row_gap
+            name = e.detail.get("name", "")
+            placed[name] = (x, y)
+            wide = e.detail.get("wide")
+            shapes.append(Shape(
+                kind="box", x=x, y=y, w=box_w, h=box_h,
+                text=f"{name}\n{e.detail.get('op', '')} · "
+                     f"{e.detail.get('records', 0)} rec",
+                color="#E8710A" if wide else "#4285F4",
+                meta={"stage": stage, "wide": bool(wide),
+                      "records": e.detail.get("records", 0)}))
+        shapes.append(Shape(
+            kind="label", x=x, y=ceiling + row_gap * 0.85, w=box_w, h=0.4,
+            text=f"stage {stage + 1}", color="#9AA0A6",
+            meta={"stage": stage}))
+
+    for e in steps:
+        name = e.detail.get("name", "")
+        if name not in placed:
+            continue
+        x2, y2 = placed[name]
+        for parent in e.detail.get("parents", []):
+            if parent not in placed:
+                continue
+            x1, y1 = placed[parent]
+            if abs(x1 - x2) < 1e-6:
+                # Same stage: nothing moved, so the edge stays in the column.
+                shapes.append(Shape(
+                    kind="arrow", x=x1, y=y1 - box_h / 2, x2=x2, y2=y2 + box_h / 2,
+                    color="#9AA0A6", meta={"shuffle": False}))
+            else:
+                shapes.append(Shape(
+                    kind="arrow", x=x1 + box_w / 2, y=y1,
+                    x2=x2 - box_w / 2, y2=y2, text="shuffle",
+                    color="#E8710A", meta={"shuffle": True}))
+
+    return Frame(shapes, duration=0.0, title=title)

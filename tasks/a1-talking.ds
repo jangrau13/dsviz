@@ -1,0 +1,72 @@
+# Task 3 - how machines talk to each other.
+#
+# One question — what is alice's balance — asked three ways. The three
+# are the families you meet everywhere:
+#
+#   RPC       call a method on another machine, as if it were local
+#   REST      ask for a resource by name, with a verb saying what to do
+#   messaging say something once and carry on; nobody answers
+#
+# Watch the diagram rather than the text. Two of these cost the caller
+# the same thing and one does not, and that is the point of the file.
+
+# --- 1. RPC: a method, on a machine that is not this one --------------
+# The contract is the signature. `balance` takes a string and gives back
+# an int, and the caller writes it the way it would write any call. What
+# a signature is written in, when the two machines are not in the same
+# language, is what an IDL is for.
+
+@machine
+class Bank:
+    @duration(0.4)
+    def balance(account: string) -> int:
+        return 250
+
+# --- 2. REST: a resource, and a verb -----------------------------------
+# The contract is the address. There is no `balance` method — there is a
+# `get`, and what you are asking about is in the path you hand it.
+
+@machine
+class Api:
+    @duration(0.4)
+    def get(path: string) -> string:
+        return "250"
+
+# --- 3. messaging: no answer, and nobody waiting -----------------------
+# A queue takes what it is given. The sender does not block, gets no
+# reply, and never learns whether anyone read it.
+
+@machine
+class Queue:
+    pass
+
+@machine
+class Phone:
+    pass
+
+app = Phone(speed=1.0)
+bank = Bank(speed=1.0)      # step 4: make this 0.2 and run it again
+web = Api(speed=1.0)
+bus = Queue(speed=1.0)
+
+world = World(machines=[app, bank, web, bus])
+
+# --- the work ---------------------------------------------------------
+# Step 1 is to run this and find all three on the timeline. Step 2 is to
+# compare the first two: the caller's side of them is identical, and the
+# diagram is where you can say why.
+
+# Every name you introduce carries a written type, here as much as
+# anywhere else — the reply of an RPC is an int because the signature
+# said so, and the reply of the REST call is the text of a resource.
+
+def story() -> void:
+    chf: int = bank.balance("alice")
+    body: string = web.get("/accounts/alice/balance")
+    app.send(bus, "balance-changed")
+    # step 3: uncomment, so someone finally reads the queue
+    # bus.send(app, "balance-changed")
+
+job = Calls(run=story)
+
+world.run(job)

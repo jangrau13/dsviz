@@ -1,6 +1,6 @@
-# Task 3 - the same word count, split across servers.
+# Task 5 - the same word count, split across servers.
 #
-# In Task 2 the map and the reduce were two functions in one program.
+# In Task 1 the map and the reduce were two functions in one program.
 # Nothing was distributed: a function call is a function call. Here they
 # are two machines, and the client has to ask each of them over a network.
 #

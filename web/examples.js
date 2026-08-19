@@ -9,26 +9,47 @@ const EXAMPLES = {
 
 
   spark: `# A Spark pipeline. reduceByKey is WIDE — it starts a new stage.
-executors 3
-input lines: "the cat sat" | "the dog ran" | "the cat ran"
+# The functions are real PySpark lambdas; the executors you declare are
+# the ones it runs on, so there is no SparkContext to write.
+@machine
+class Executor:
+    pass
 
-words  = textFile(lines).flatMap(split(value))
-pairs  = words.mapToPair(value, 1)
-counts = pairs.reduceByKey(a + b)
-counts.cache()
-counts.collect()`,
+e1 = Executor(speed=1.0)
+e2 = Executor(speed=1.0)
+e3 = Executor(speed=0.5)
 
-  lineage: `# Lose a cached RDD and Spark rebuilds it from lineage —
+world = World(machines=[e1, e2, e3])
+
+departures = parallelize(["bern,4", "chur,0", "bern,7", "chur,2", "sion,9"])
+fields = departures.map(lambda row: row.split(","))
+late   = fields.filter(lambda f: int(f[1]) > 0)
+byStop = late.map(lambda f: (f[0], int(f[1])))
+worst  = byStop.reduceByKey(lambda a, b: a if a > b else b)
+
+job = Spark(pipeline=worst)
+
+world.run(job)`,
+
+  lineage: `# Lose a step and Spark rebuilds it from lineage —
 # the thing MapReduce cannot do.
-executors 2
-input lines: "the cat sat" | "the dog ran"
+@machine
+class Executor:
+    pass
 
-words  = textFile(lines).flatMap(split(value))
-pairs  = words.mapToPair(value, 1)
-counts = pairs.reduceByKey(a + b)
-counts.collect()
+e1 = Executor(speed=1.0)
+e2 = Executor(speed=1.0)
 
-lose counts`,
+world = World(machines=[e1, e2])
+
+departures = parallelize(["bern,4", "chur,0", "bern,7", "chur,2"])
+fields = departures.map(lambda row: row.split(","))
+byStop = fields.map(lambda f: (f[0], int(f[1])))
+total  = byStop.reduceByKey(lambda a, b: a + b)
+
+job = Spark(pipeline=total, lose=byStop)
+
+world.run(job)`,
 
   grpc: `# A client calling map and reduce services.
 service MrMapServer: Map takes 0.5

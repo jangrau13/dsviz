@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from manim import *
 
-from .shapes import Frame
+from .shapes import Frame, dataflow, gantt, lineage, spacetime
 
 
 class FrameScene(Scene):
@@ -134,3 +134,58 @@ class FrameScene(Scene):
             return Text(s.text, font_size=22, color=GREY_B).move_to([s.x, s.y, 0])
 
         return None
+
+
+# --- programs to video --------------------------------------------------
+
+# What each view answers. A pipeline gets the lineage first because that is the
+# question Spark raises and the others cannot: what was this built from, and
+# where did the data have to move.
+VIEWS = {
+    "lineage": (lineage, "The RDD graph, in stages"),
+    "dataflow": (dataflow, "Machines, and what moved between them"),
+    "gantt": (gantt, "Who was busy, and when"),
+    "spacetime": (spacetime, "Events down, messages across"),
+}
+
+
+def to_manim(source: str, *, views=("lineage", "gantt"), title: str = "",
+             seed: int | None = 1, module: str | None = None) -> dict:
+    """
+    Turn a program into Manim scenes — one per view.
+
+    The whole point of the Trace -> shapes -> Manim path is that a dialect gets
+    video for free, so this takes the program a student wrote rather than a
+    Frame someone assembled by hand. A Spark pipeline renders here for the same
+    reason an RPC call does: both produced a Trace, and shapes reads Traces.
+
+        scenes = to_manim(open("a2-wordcount.ds").read())
+        # then: manim -pql thisfile.py SparkLineage
+
+    Returns {name: Scene subclass}, stamped with the caller's module so Manim
+    can discover them in the file that asked for them.
+    """
+    from .runtime import build
+
+    if module is None:
+        import inspect
+        module = inspect.stack()[1].frame.f_globals.get("__name__", __name__)
+
+    cluster = build(source, seed=seed)
+    trace = cluster.sorted_trace()
+
+    scenes = {}
+    for view in views:
+        if view not in VIEWS:
+            raise ValueError(
+                f"unknown view {view!r}; try one of {', '.join(VIEWS)}")
+        shape_fn, caption = VIEWS[view]
+        frame = shape_fn(trace, title=title or caption)
+        if not frame:
+            # A view with nothing in it is not rendered as an empty screen —
+            # a pipeline has no spacetime diagram, and pretending otherwise
+            # produces a blank second of video nobody can interpret.
+            continue
+        name = f"{view.title()}Scene"
+        scenes[name] = FrameScene.with_frame(frame, name, module=module)
+    return scenes

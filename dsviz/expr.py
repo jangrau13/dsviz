@@ -95,6 +95,21 @@ def type_of(v: Any) -> str:
 # stop being useful the moment the job is not word count. Anything problem
 # shaped is a function the student writes.
 
+def _join(xs, sep):
+    """One string out of many, with `sep` between them."""
+    return str(sep).join(str(x) for x in xs or [])
+
+
+def _unique(xs):
+    """Each value once, keeping the order it first appeared in."""
+    seen, out = set(), []
+    for x in xs or []:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
 def _split(s, sep=None):
     return s.split() if sep is None else s.split(sep)
 
@@ -130,6 +145,20 @@ BUILTINS: dict[str, tuple] = {
     "hash":    ([VType.ANY], VType.INT, _hash31,
                 "hash(key) -> int, a stable 31-hash"),
     "abs":     ([VType.INT], VType.INT, abs, "abs(n: int) -> int"),
+    # First occurrence of each value, in the order they arrived. Order is kept
+    # rather than sorted because a job's output has to be the same on every
+    # run, and "the order they arrived" is something the student can reason
+    # about where "whatever a set iterates as" is not.
+    "unique":  ([VType.LIST_STR], VType.LIST_STR, _unique,
+                "unique(values: [string]) -> [string]"),
+    # `sort` and `join` exist so that a reducer can produce something other
+    # than a number. An index's answer for a word is the documents that hold
+    # it, and that answer has to come out in the same order on every run, or
+    # the same submission passes and fails on alternate attempts.
+    "sort":    ([VType.LIST_STR], VType.LIST_STR, lambda xs: sorted(xs or []),
+                "sort(values: [string]) -> [string]"),
+    "join":    ([VType.LIST_STR, VType.STR], VType.STR, _join,
+                'join(values: [string], separator: string) -> string'),
 }
 
 

@@ -45,7 +45,7 @@ world = World(machines=[m1, m2, r1, r2])
 job = MapReduce(map=tokenize, reduce=total, partition=byKey)
 world.run(job)
 '''
-TASK = "t1-wordcount"
+TASK = "a1-wordcount"
 
 print("=== a stamped hand-in verifies ===")
 stamped = attest.stamp(TASK, SOLUTION, at="2026-08-19T09:00:00+00:00", runs=100)
@@ -69,7 +69,7 @@ CASES = {
     "code edited after handing in":
         stamped.replace("sum(values)", "sum(values) + 0"),
     "a record lifted from another task":
-        attest.stamp("t2-combiner", SOLUTION, at="", runs=1),
+        attest.stamp("extra-combiner", SOLUTION, at="", runs=1),
 }
 for label, text in CASES.items():
     reasons = attest.verify(TASK, text)

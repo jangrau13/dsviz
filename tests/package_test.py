@@ -145,7 +145,7 @@ from dsviz.assignment import ASSIGNMENTS, judge_assignment
 # that ride inside the package.
 assert assets.tasks_dir().name == "_tasks", assets.tasks_dir()
 assert assets.web_dir().name == "_web", assets.web_dir()
-code = ASSIGNMENTS["t1-wordcount"].starter + """
+code = ASSIGNMENTS["a1-wordcount"].starter + """
 def tokenize(key: string, value: string) -> void:
     for word: string in split(lower(value)):
         emit(word, 1)
@@ -159,7 +159,7 @@ def byKey(key: string, n: int) -> int:
 job = MapReduce(map=tokenize, reduce=total, partition=byKey)
 world.run(job)
 """
-print(json.dumps(json.loads(judge_assignment("t1-wordcount", code))["verdict"]))
+print(json.dumps(json.loads(judge_assignment("a1-wordcount", code))["verdict"]))
 '''
             # Run from anywhere but the checkout. The current directory is
             # on `sys.path`, so running this here would import the source tree
@@ -173,7 +173,7 @@ print(json.dumps(json.loads(judge_assignment("t1-wordcount", code))["verdict"]))
             cli = subprocess.run([str(venv / bindir / "dsviz"), "tasks"],
                                  cwd=tmp, capture_output=True, text=True)
             ok("the `dsviz` command is installed",
-               cli.returncode == 0 and "t1-wordcount" in cli.stdout,
+               cli.returncode == 0 and "a1-wordcount" in cli.stdout,
                cli.stderr.strip()[-200:])
 
 # --- the editor loads everything the engine needs ------------------------

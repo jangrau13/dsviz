@@ -10,10 +10,10 @@ end — an exercise names the tasks it wants and everything else stays hidden.
     # pyproject.toml, in the exercise
     [tool.dsviz]
     title = "Assignment 2 — Spark"
-    tasks = ["t3-spark", "t6-telemetry"]
+    tasks = ["a2-wordcount", "a2-telemetry"]
 
     [tool.dsviz.titles]
-    "t3-spark" = "Task 1: word count in Spark"
+    "a2-wordcount" = "Task 1: word count in Spark"
 
 The declaration lives in the exercise's own `pyproject.toml` because that file
 already has to exist to depend on dsviz at all, and a second config file would

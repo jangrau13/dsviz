@@ -137,7 +137,7 @@ ok("a point-to-point message under causal delivery is explained, not ignored",
    "; ".join(notes(POINT % ', delivery="causal"'))[:100] or "(no note)")
 
 # --- the shipped task does what its comments promise --------------------
-task = ASSIGNMENTS["t9-buffering"].starter
+task = ASSIGNMENTS["a3-buffering"].starter
 shipped = [label for who, _, label in stamps(task, machine="p3")]
 ok("the task ships showing the problem", shipped == ["recv B", "recv A (late)"],
    str(shipped))

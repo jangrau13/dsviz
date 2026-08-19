@@ -116,7 +116,7 @@ blob = "\n".join(pages.values()).lower()
 # so it has to be documented or it cannot be used. What must stay out is the
 # reasoning about when it pays off, which is a task's question to ask.
 FORBIDDEN = [
-    "word count", "wordcount", "t0-rpc", "t1-", "t2-", "t3-", "t4-",
+    "word count", "wordcount", "a1-rpc", "t1-", "t2-", "t3-", "t4-",
     "t5-", "t6-", "t7-", "t8-", "t9-",
     "chunk001", "task 0", "task 1", "task 2", "task 3", "task 4",
     "split(lower(",          # the mapper body, in one call

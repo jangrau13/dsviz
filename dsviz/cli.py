@@ -97,13 +97,23 @@ def seed(root: pathlib.Path) -> dict:
     # the course has; opening the Spark exercise on a set of tabs that includes
     # a word-count MapReduce would undo the scoping the dropdown does.
     wanted = set(exercise.task_names(root))
+    starters = {path.stem: path.read_text()
+                for path in sorted(tasks.glob("*.ds")) if path.stem in wanted}
+    # A data file ships when one of this exercise's starters names it. The
+    # rule used to be "every data file, always", on the grounds that nothing
+    # recorded which task read which — but something does: the task that opens
+    # chunk001.txt says so, in the line that opens it. Without this the Spark
+    # exercise's CSVs turned up in a MapReduce workspace, which is the same
+    # unscoping the dropdown exists to prevent, one directory lower.
+    named = "\n".join(starters.values())
+
     for path in sorted(tasks.iterdir()):
         if not path.is_file() or path.name.startswith("."):
             continue
-        # Data files come regardless of which task reads them: a task that
-        # opens chunk001.txt needs chunk001.txt to be something the student
-        # has, and nothing records which task that is.
-        if path.suffix == ".ds" and path.stem not in wanted:
+        if path.suffix == ".ds":
+            if path.stem not in wanted:
+                continue
+        elif path.name not in named:
             continue
         files[path.name] = path.read_text()
     return files

@@ -1,4 +1,4 @@
-# Task 0 - a client calling two services.
+# Task 4 - a client calling two services.
 #
 # A machine is a decorated class. A call is an ordinary method call on
 # another machine, except that this one crosses a network, waits, and can

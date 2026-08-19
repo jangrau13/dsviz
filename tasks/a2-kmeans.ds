@@ -1,0 +1,61 @@
+# Task 3 - the same measurements, read again and again.
+#
+# k-means repeats one step until it settles. Every round assigns each
+# record to its nearest centroid, then recomputes each centroid from the
+# records that chose it. The assignment is per record and needs no
+# coordination; the recomputation is per centroid and needs all of them.
+#
+# showering.csv is one shower per line:
+#     start_hour,volume_dl,temperature_c,duration_s
+# Four people used this shower, and each used it differently. Whether the
+# clusters find them is the question.
+#
+# The rounds below are written out one after the other on purpose. That is
+# what an iterative job is: the same pass over the same data, again.
+# `cache` is the one line that stops each round starting over.
+#
+# Note how the centroid is recomputed. A mean is a sum divided by a count,
+# so each record carries both and the reducer adds them. Writing it as a
+# running average instead — reduceByKey(lambda a, b: (a + b) / 2) — gives a
+# different answer depending on how the rows were split across machines,
+# and Spark does not promise you any particular split.
+
+@machine
+class Executor:
+    pass
+
+e1 = Executor(speed=1.0)
+# step 5: add   error_rate=0.3, on_crash="restart", restart_after=0.5
+e2 = Executor(speed=1.0)
+e3 = Executor(speed=1.0)
+
+# --- the world -------------------------------------------------------
+
+world = World(machines=[e1, e2, e3])
+
+# --- the pipeline ----------------------------------------------------
+
+showers = textFile("showering.csv")
+fields = showers.map(lambda row: row.split(","))
+# A shower that used less than 50 dL was the tap being run, not a shower.
+real = fields.filter(lambda f: float(f[1]) >= 50.0)
+kept = real.cache()          # step 2: make this   kept = real.map(lambda f: f)
+
+# round one: four starting centroids, picked by hand, as volume in dL
+assigned1 = kept.map(lambda f: (min(range(4), key=lambda i: abs(float(f[1]) - [60, 130, 200, 280][i])), (float(f[1]), 1)))
+sums1 = assigned1.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]))
+centroids1 = sums1.mapValues(lambda s: s[0] / s[1])
+
+# round two: the same pass, with the centroids round one produced.
+# step 3: run it, read centroids1 off the diagram, and put those four
+#         numbers in the list below in place of the starting ones.
+assigned2 = kept.map(lambda f: (min(range(4), key=lambda i: abs(float(f[1]) - [60, 130, 200, 280][i])), (float(f[1]), 1)))
+sums2 = assigned2.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]))
+centroids2 = sums2.mapValues(lambda s: s[0] / s[1])
+
+# step 4: add a third round by copying the three lines above and renaming
+#         them, and say what one more round costs.
+
+job = Spark(pipeline=centroids2, lose=kept)
+
+world.run(job)

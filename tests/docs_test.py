@@ -126,38 +126,40 @@ for term in FORBIDDEN:
 
 from dsviz.assignment import ASSIGNMENTS  # noqa: E402
 
-# The reference solutions live in a sibling repository; when it is checked
-# out, no line of one may appear in the documentation.
+# No line a solution adds may appear in the documentation.
 #
-# Only the lines a solution *adds* count. A reference solution is the task's
-# own starter with the answer written into it, and the starter ships to every
-# student — so `world.run(job)` and `def story() -> void:` appear in both the
-# solution and, legitimately, in a reference that has to document how a job is
-# run at all. Comparing whole files made those collide and turned this check
-# into noise, which is worse than not having it: the answer is exactly the
-# part the starter does not already contain.
-sol = pathlib.Path("..") / "spikey-dsl-sol" / "solutions"
-if sol.is_dir():
-    leaked = []
-    for f in sorted(sol.glob("*.ds")):
-        spec = ASSIGNMENTS.get(f.stem)
-        # A starter's commented-out guidance is public too: `#   world.run(job)`
-        # is shown to every student, so the uncommented form is not an answer.
-        public = set()
-        for ln in (spec.starter if spec else "").splitlines():
-            ln = ln.strip()
-            public.add(ln)
-            public.add(ln.lstrip("#").strip())
-        for line in f.read_text().splitlines():
-            line = line.strip()
-            if len(line) < 12 or line.startswith("#") or line in public:
-                continue
-            if line.lower() in blob:
-                leaked.append(f"{f.name}: {line}")
-    ok("no line a solution adds appears in the docs", not leaked,
-       " | ".join(leaked))
-else:
-    print("note  reference solutions not checked out — line check skipped")
+# Checked against `tests/exercise/` rather than a real course, for the same
+# reason as in leak_test: this tests that the check works, and the language
+# repository should not need a sibling checkout to be green.
+import fixture                                          # noqa: E402
+
+def solution_adds(starter: str, solution: str) -> list:
+    """The substantial lines a solution adds to the starter it began as.
+
+    A reference solution is the task's own starter with the answer written
+    into it, so most of its lines ship to every student and are not secrets:
+    `world.run(job)` is in both. Comparing whole files flagged the language's
+    own syntax as a leaked answer, which is noise, and noise is worse than no
+    check. The answer is exactly the part the starter does not contain.
+
+    Commented-out guidance counts as public too — a starter that says
+    `#   world.run(job)` has shown everyone the uncommented form.
+    """
+    public = set()
+    for line in starter.splitlines():
+        line = line.strip()
+        public.add(line)
+        public.add(line.lstrip("#").strip())
+    return [line.strip() for line in solution.splitlines()
+            if len(line.strip()) >= 12
+            and not line.strip().startswith("#")
+            and line.strip() not in public]
+
+leaked = [line for line in solution_adds(
+    fixture.ASSIGNMENTS["fx-takings"].starter, fixture.SOLUTION)
+    if line.lower() in blob]
+ok("no line a solution adds appears in the docs", not leaked,
+   " | ".join(leaked))
 
 # Held-out input never travels: the docs are generated from tables that must
 # not contain it either.

@@ -1,36 +1,12 @@
 # Task 1 - word count, ignoring case.
 #
-# Write three functions, then wire them into a job. You choose the names,
-# the parameters and the types. Nothing is inferred, and no function is a
+# Write three functions and hand them to a job. You choose the names, the
+# parameters and the types: nothing is inferred, and no function is a
 # mapper because of what it is called. A function is accepted in a
 # position only if its signature fits that position.
 #
-#   the mapper       is called once per document, with that document's
-#                    name and its text, and emits a pair for every
-#                    occurrence it finds
-#   the reducer      is called once per key, with every value emitted
-#                    for that key, and returns the result for it
-#   the partitioner  is called with a key and the number of reducers,
-#                    and returns which reducer owns that key. The same
-#                    key must always give the same answer
-#
 # What a pair should be, and what "ignoring case" implies about when to
-# normalise, are yours to decide.
-#
-# Press ctrl/cmd + K for the language reference: it lists every function
-# available to you and the shape a job is written in.
-
-# --- the world -------------------------------------------------------
-# The machines that exist, how fast each one is, and how it fails. A
-# machine says both halves of that: error_rate is how likely it is to
-# break, and on_crash is what happens next, either "stay_dead" or
-# "restart".
-#
-# Map output lives in the mapper's memory, so a mapper that dies loses
-# all of it. One that restarts runs its splits again and the job is
-# only slower. One that stays dead takes its share of the counts with
-# it, and the answer comes out wrong. Give m1 an error_rate and run it a
-# hundred times to see how often each of those happens.
+# normalise, are yours to decide. Press ctrl/cmd + K for the reference.
 
 @mapper
 class Worker:

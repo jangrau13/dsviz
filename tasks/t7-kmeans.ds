@@ -1,29 +1,13 @@
 # Task 3 - the same points, read again and again.
 #
-# k-means repeats one step until it settles. Every round assigns each point to
-# its nearest centroid, then recomputes each centroid from the points that
-# chose it. The assignment is per point and needs no coordination; the
-# recomputation is per centroid and needs all of them, so it is a shuffle.
+# k-means repeats one step until it settles. Every round assigns each
+# point to its nearest centroid, then recomputes each centroid from the
+# points that chose it. The assignment is per point and needs no
+# coordination; the recomputation is per centroid and needs all of them.
 #
-# The two rounds below are written out one after the other on purpose. That is
-# what an iterative job is: the same pass over the same data, again. Reading
-# `points` off disk on every round is what makes MapReduce a poor fit here, and
-# `cache` is the one line that changes it — the points are kept in memory and
-# every later round starts from what is already there.
-#
-# Try these in order. Each step is marked on the line it belongs to.
-#
-#   1. run it as it is, and count the stages. Which of them had to wait for
-#      all the machines, and which did not
-#   2. take the cache away, and say what a third round would now cost
-#   3. lose the cached points and watch the lineage rebuild them. Note what
-#      it did *not* do: it did not read them off disk again
-#   4. add a third round by copying the two lines of round two. The pipeline
-#      grows by one stage per round, which is the shape of the problem
-#   5. make one executor unreliable and run it a few times. Compare what a
-#      lost partition costs here against a lost mapper in Task 1
-
-# --- the machines ----------------------------------------------------
+# The two rounds below are written out one after the other on purpose.
+# That is what an iterative job is: the same pass over the same data,
+# again. `cache` is the one line that stops each round starting over.
 
 @machine
 class Executor:

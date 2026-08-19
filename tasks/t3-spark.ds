@@ -1,26 +1,11 @@
 # Task 3 - the same work, kept in memory.
 #
 # MapReduce writes to disk between every stage. Spark keeps the data and
-# remembers how it was produced. Those two facts are the whole
-# difference.
+# remembers how it was produced. Those two facts are the whole difference.
 #
 # The assignments below are the lineage: each step records what it was
-# made from. A lost step is not reloaded from disk. It is recomputed from
+# made from. A lost step is not reloaded from disk, it is recomputed from
 # its ancestors, which is why the graph is worth keeping.
-#
-# Try these in order. Each step is marked on the line it belongs to.
-#
-#   1. run it as it is. e3 is already the slow one. Find it on the
-#      picture, and watch the whole stage wait for it
-#   2. lose an earlier step instead, and see how much more has to be
-#      rebuilt
-#   3. bring e3 back up to speed, and watch the straggler go away
-#   4. make an executor unreliable and run it many times. It loses
-#      whatever it was holding and the lineage rebuilds it. Compare what
-#      that costs against MapReduce losing a mapper
-#   5. ask yourself which steps could have run at the same time
-
-# --- the machines ----------------------------------------------------
 
 @machine
 class Executor:

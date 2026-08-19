@@ -1,17 +1,11 @@
 # Task 2 - the answer must not change, only the traffic.
 #
-# Watch NETWORK_MSGS before and after you add the combiner.
+# Bring your mapper and reducer across from Task 1 and add a combiner. It
+# runs on the mapper, before anything crosses the network, and may run
+# zero times, once, or many times over the same data — so it has to be
+# safe however often it runs.
 #
-# Bring your mapper and reducer across from Task 1, then add one more
-# function:
-#
-#   the combiner  runs on the mapper, before anything crosses the
-#                 network. It is given a key and some of that key's
-#                 values, and returns a partial result. It may run zero
-#                 times, once, or many times over the same data, so it
-#                 has to be safe however often it runs.
-
-# --- the world -------------------------------------------------------
+# Watch NETWORK_MSGS before and after.
 
 @mapper
 class Worker:

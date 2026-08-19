@@ -1,32 +1,13 @@
 # Task 2 - where the shuffle is, and what it costs.
 #
 # The readings arrive long: one row per sensor per timestamp. The question
-# asked of them is per room, so at some point every reading for a room has to
-# end up on the same machine. That move is the shuffle, and it is the only
-# expensive thing in this pipeline.
+# asked of them is per room, so at some point every reading for a room has
+# to end up on the same machine. That move is the shuffle, and it is the
+# only expensive thing in this pipeline.
 #
-# Narrow steps keep each partition where it is: a machine can do its share
-# without talking to anyone. Wide steps cannot — they have to redistribute the
-# data by key first, and every machine waits for that to finish. On the diagram
-# a wide step is the one with a barrier in front of it.
-#
-# Reshaping long data into wide is a wide step for exactly this reason, and
-# that is the answer the report asks you for: not that pivoting is slow, but
-# why it has to be.
-#
-# Try these in order. Each step is marked on the line it belongs to.
-#
-#   1. run it as it is. Read the stages off the diagram and say, before you
-#      change anything, which line caused the barrier
-#   2. drop the readings you do not need earlier instead of later, and see
-#      whether the shuffle gets cheaper
-#   3. lose the grouped step and watch what has to be rebuilt. Compare that
-#      with losing the step before it
-#   4. make one executor slow. The stage takes as long as its slowest
-#      machine, which is what a straggler means
-#   5. ask yourself which of these steps could have run at the same time
-
-# --- the machines ----------------------------------------------------
+# Narrow steps keep each partition where it is. Wide steps cannot, and
+# every machine waits for the redistribution. On the diagram a wide step
+# is the one with a barrier in front of it.
 
 @machine
 class Executor:

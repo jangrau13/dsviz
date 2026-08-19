@@ -82,9 +82,14 @@ main {
   main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
 }
 
-/* The right half, split 2:1. */
+/* The right half: the diagram takes what is left, the results take what they
+   need. Splitting it 2:1 gave the results a third of the height whatever was
+   in them — which was too little for a verdict plus a row of metric tiles, so
+   the line saying whether the run passed was clipped in half, while the
+   diagram sat above it with empty space to spare. Sizing the results to their
+   content and capping them puts the slack where it belongs. */
 .view-pane {
-  display: grid; grid-template-rows: auto 2fr 1fr;
+  display: grid; grid-template-rows: auto 1fr auto;
   min-height: 0;
 }
 
@@ -156,6 +161,8 @@ button:hover, select:hover { border-color: var(--accent); }
    for it scrolled away behind the metric tiles — exactly when they mattered. */
 .results {
   border-top: 1px solid var(--line); min-height: 0;
+  /* A run with many failed cases must not push the diagram off the page. */
+  max-height: 45%;
   display: flex; flex-direction: column;
 }
 .verdict {

@@ -1,44 +1,15 @@
 # Task 2.2 - showing a message only when it makes sense.
 #
-# Task 2.1 gave every process a vector clock, which is enough to say what is
-# ordered and what is not. It is not enough on its own: knowing that B depends
-# on A does not stop B being displayed first if B gets there first.
+# A vector clock is enough to say what is ordered. It is not enough on its
+# own: knowing that B depends on A does not stop B being displayed first
+# if B gets there first.
 #
-# This is a chat. Every line goes to everyone — that is what `broadcast` is,
-# and the rule below is only defined for messages that go to everyone. "The
-# next message p2 sent" means nothing if p2 sends different things to
-# different people.
+# This is a chat, so every line goes to everyone — that is `broadcast`,
+# and the rule below is only defined for messages that go to everyone.
+# `late=p3` says one copy takes the slow route.
 #
-# `late=p3` says one copy takes the slow route. Everyone else has it at once;
-# p3 does not. That is the only unusual thing in the program, and it is what
-# makes the problem visible at all.
-#
-# The rule, once delivery is a decision, is:
-#
-#     a message from p_j carrying stamp V is delivered at p_i only when
-#         V[j] == V_i[j] + 1        it is the very next thing p_j sent
-#         V[k] <= V_i[k]  for k≠j   and I have seen everything p_j had seen
-#
-# A message that fails it is held, not dropped, and offered again every time
-# something is delivered — because a delivery is exactly the event that can
-# release it.
-#
-# Try these in order. Steps 1 and 2 are the comparison the task is about.
-#
-#   1. run it as it is, with the rule switched off. Read p3's line. It is
-#      shown the reply before the message being replied to, and there is
-#      nothing in the vector clock stopping that
-#   2. switch the rule on, and read p3's line again. Note which message is
-#      held, what released it, and that no message was lost
-#   3. make p1 slow. The order does not change. Delivery order is about the
-#      messages, not about who is fast
-#   4. add a third message and choose who is late, then predict what p3 sees
-#      before you run it
-#   5. one to answer, not to edit: every process now displays the same
-#      order. Is that the same thing as every process displaying it at the
-#      same time, and does the chat need the second?
-
-# --- the machines ----------------------------------------------------
+# A message that fails the rule is held, not dropped, and offered again
+# every time something is delivered.
 
 @process
 class Node:

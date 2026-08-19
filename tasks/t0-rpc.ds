@@ -2,31 +2,12 @@
 #
 # A machine is a decorated class. A call is an ordinary method call on
 # another machine, except that this one crosses a network, waits, and can
-# fail.
+# fail. Calls are synchronous, so a slow server shows up as the caller
+# sitting idle. Statuses follow gRPC: ok, unavailable, unimplemented,
+# deadline_exceeded.
 #
-# Calls are synchronous. The caller waits for the round trip, so a slow
-# server shows up as the caller sitting idle. Statuses follow gRPC: ok,
-# unavailable, unimplemented, deadline_exceeded.
-#
-# Six things to try. Every line you need is written below and commented
-# out, marked with the step it belongs to. Take the # off the front and
-# run it again. Steps 1 to 4 stage a failure yourself. Steps 5 and 6 stop
-# staging it and let the machine be unreliable on its own.
-#
-#   1. run it as it is, and watch the caller wait for each answer
-#   2. give the slow call less time than it needs
-#   3. take the bank down, then retry into it. A machine that is down is
-#      still down when the retry arrives, which is the point
-#   4. bring it back yourself, and ask it again
-#   5. undo 3 and 4, and make the bank unreliable instead. Which calls
-#      fail now differs from one run to the next
-#   6. tell the bank to come back on its own. Same error rate, same
-#      retries, and a very different job: a retry only helps a machine
-#      that recovers.
-
-# --- the machines ----------------------------------------------------
-# A class is a kind of machine. What runs are the instances you make from
-# it, and each instance carries its own speed.
+# Every line you need is written below and commented out, marked with the
+# step it belongs to. The steps are listed in the panel above.
 
 @machine
 class Ledger:

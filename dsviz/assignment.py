@@ -406,12 +406,15 @@ RPC_BASICS = Assignment(
     brief="Before anything is distributed, one machine has to ask another for "
           "something. Find out what that costs, and what happens when it fails.",
     steps=[
-        "Run the program as given. Watch the client wait while each server works.",
-        "Give the slow call a deadline it cannot meet, and see what the client "
-        "is told.",
-        "Crash a server before a call, and add retries until the call succeeds "
-        "after a restart.",
-        "Answer for yourself: how does the client tell 'slow' from 'dead'?",
+        "Run it as given, and watch the caller wait for each answer.",
+        "Give the slow call less time than it needs.",
+        "Take the bank down, then retry into it. A machine that is down is "
+        "still down when the retry arrives, which is the point.",
+        "Bring it back yourself, and ask it again.",
+        "Undo 3 and 4, and make the bank unreliable instead. Which calls fail "
+        "now differs from one run to the next.",
+        "Tell the bank to come back on its own. Same error rate, same retries, "
+        "and a very different job — a retry only helps a machine that recovers.",
     ],
     dialect="rpc",
 )
@@ -526,13 +529,16 @@ MR_OVER_RPC = Assignment(
           "live on different machines and the client has to ask each of them "
           "across a network.",
     steps=[
-        "Run it as given, and watch the client wait for each server in turn.",
-        "Give the map call a deadline it cannot meet, and read what the "
-        "client is told.",
-        "Crash the map server before the call, and retry into it. A machine "
-        "that is down is still down when the retry arrives.",
-        "Make it unreliable instead of dead, and work out when a retry is "
-        "worth anything at all.",
+        "Run it as given. The client cannot reduce what it has not been "
+        "given, so it waits.",
+        "Give the map call a deadline shorter than the work takes.",
+        "Take the map server down before the first call, then retry into it. "
+        "A machine that is down is still down when the retry arrives.",
+        "Bring it back yourself, and map the second chunk.",
+        "Undo 3 and 4, and make the server unreliable instead. Which calls "
+        "fail now differs from one run to the next.",
+        "Let it recover on its own, and ask why the retry is worth something "
+        "now when it was worth nothing in step 3.",
     ],
     dialect="rpc",
 )
@@ -562,12 +568,15 @@ KMEANS = Assignment(
           "no coordination; recomputing the centroids needs all of them. "
           "Keeping the points in memory is what makes the repetition cheap.",
     steps=[
-        "Run it and count the stages. Say which had to wait for every "
-        "machine and which did not.",
+        "Run it and count the stages. Say which had to wait for every machine "
+        "and which did not.",
         "Take the cache away, and say what a third round would now cost.",
-        "Lose the cached points, and note that the lineage rebuilt them "
-        "rather than reading them off disk.",
-        "Add a third round, and describe how the pipeline grows per round.",
+        "Lose the cached points, and note that the lineage rebuilt them rather "
+        "than reading them off disk.",
+        "Add a third round by copying the two lines of round two. The pipeline "
+        "grows by one stage per round, which is the shape of the problem.",
+        "Make an executor unreliable and run it a few times. Compare what a "
+        "lost partition costs against a lost mapper in Task 1.",
     ],
     dialect="rpc",
 )

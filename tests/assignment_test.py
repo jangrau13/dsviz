@@ -138,4 +138,35 @@ for m in r["metrics"]:
     assert m["explain"]["what"] and m["explain"]["why"], m["name"]
 print(f"ok all {len(r['metrics'])} metrics carry an explanation")
 
+# --- the file's markers and the panel's steps are one list ---------------
+# A starter marks the lines a step applies to — `# step 3: add , retries=2` —
+# and the panel next to it lists what the steps are. The file used to carry its
+# own copy of that list, which hid the fact that they disagreed: t0-rpc marked
+# six steps while the task offered four, so "step 5" named nothing a student
+# could look up. With the duplicate gone the panel is the only list, and it has
+# to cover every marker.
+import re  # noqa: E402
+
+drift = []
+for name, spec in ASSIGNMENTS.items():
+    marked = {int(n) for n in re.findall(r"step (\d+)", spec.starter)}
+    if marked and max(marked) > len(spec.steps):
+        drift.append(f"{name}: file marks step {max(marked)}, "
+                     f"panel lists {len(spec.steps)}")
+assert not drift, "; ".join(drift)
+print(f"ok every step a starter marks is listed in its task")
+
+# The starters carry the code, and the panel carries the prose. A starter that
+# is mostly prose is one the student has to scroll past to reach their work.
+bulky = []
+for name, spec in ASSIGNMENTS.items():
+    lines = spec.starter.split("\n")
+    comment = sum(1 for line in lines if line.strip().startswith("#"))
+    code = sum(1 for line in lines
+               if line.strip() and not line.strip().startswith("#"))
+    if comment > code * 3:
+        bulky.append(f"{name}: {comment} comment lines to {code} of code")
+assert not bulky, "; ".join(bulky)
+print("ok no starter is more than three-quarters commentary")
+
 print("\nALL ASSIGNMENT TESTS PASSED")

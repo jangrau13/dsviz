@@ -109,7 +109,7 @@ async function boot() {
   // tests/package_test.py, which walks the import graph from these entry
   // points. A module added to the package and not to this list is a page that
   // loads to an ImportError, which no Python suite can see.
-  const modules = ["__init__", "assets", "values", "core", "patterns", "types",
+  const modules = ["__init__", "values", "core", "patterns", "types",
                    "expr", "grammar", "syntax", "runtime", "project",
                    "notation", "notation_mr", "notation_spark", "pyspark", "metrics",
                    "contest", "shapes", "assignment", "langserver"];
@@ -128,18 +128,33 @@ async function boot() {
   await pyodide.runPythonAsync(
     "from dsviz.assignment import catalogue, judge_assignment, ASSIGNMENTS");
 
-  // Each task's code is a .ds file, not a Python string, so it has to be
-  // fetched like the modules were. `assignment.py` looks for them beside the
-  // package, which is /home/pyodide/tasks once the modules are in place.
-  const taskNames = (await pyodide.runPythonAsync(
-    "','.join(ASSIGNMENTS)")).split(",").filter(Boolean);
+  // The tasks are the exercise's, not the package's. dsviz ships none, so
+  // which ones exist is whatever this checkout's tasks.py says — fetched
+  // and run here exactly as it is on the server.
+  const manifest = await fetch("tasks.py").then((r) => {
+    if (!r.ok) throw new Error("this exercise has no tasks.py");
+    return r.text();
+  });
+  pyodide.FS.writeFile("/home/pyodide/exercise_tasks.py", manifest);
+  await pyodide.runPythonAsync(
+    "import exercise_tasks\n" +
+    "from dsviz.assignment import register\n" +
+    "register(exercise_tasks.TASKS, getattr(exercise_tasks, 'GOALS', {}),\n" +
+    "         tasks_dir='/home/pyodide/tasks')");
+
+  // Starters came with the manifest — they are strings on the task, so there
+  // is nothing to fetch and nothing sitting in the checkout for a student to
+  // edit around the editor. Data files are different: they are input, they
+  // are ordinary files, and a pipeline that reads one needs it here.
+  // The server knows which files those are, because it can see the
+  // directory; the page cannot, so it asks.
+  const listing = await fetch("api/exercise")
+    .then((r) => (r.ok ? r.json() : { data: [] }))
+    .catch(() => ({ data: [] }));
   pyodide.FS.mkdirTree("/home/pyodide/tasks");
-  for (const task of taskNames) {
-    const src = await fetch(`tasks/${task}.ds`).then((r) => {
-      if (!r.ok) throw new Error(`missing tasks/${task}.ds`);
-      return r.text();
-    });
-    pyodide.FS.writeFile(`/home/pyodide/tasks/${task}.ds`, src);
+  for (const file of listing.data ?? []) {
+    const res = await fetch(`tasks/${file}`);
+    if (res.ok) pyodide.FS.writeFile(`/home/pyodide/tasks/${file}`, await res.text());
   }
 
   loadCatalogue();
@@ -1306,28 +1321,11 @@ function loadCatalogue() {
   assignments = JSON.parse(fn());
   fn.destroy();
 
-  // One package ships every task the course has; an exercise offers a few of
-  // them. The server injects the list when it serves this page, so the Spark
-  // exercise does not present a word-count MapReduce. No tag means no
-  // exercise around us — show everything, which is what this repo wants.
-  const only = document.querySelector('meta[name="dsviz-tasks"]')?.content ?? "";
-  if (only.trim()) {
-    const wanted = only.split(",").map((s) => s.trim()).filter(Boolean);
-    assignments = wanted
-      .map((n) => assignments.find((a) => a.name === n))
-      .filter(Boolean);
-  }
-
-  // A task keeps one id across the course and is numbered by the exercise
-  // that uses it, so the heading comes from the exercise when it says one.
-  const renamed = document.querySelector('meta[name="dsviz-titles"]')?.content;
-  if (renamed) {
-    try {
-      const byName = JSON.parse(renamed);
-      for (const a of assignments) if (byName[a.name]) a.title = byName[a.name];
-    } catch { /* a malformed override leaves the package's own titles */ }
-  }
-
+  // No filtering, and no renaming. The catalogue is the exercise's own
+  // tasks.py, in the order that file lists them and under the headings it
+  // writes. This used to be a package shipping every task the course had and
+  // a meta tag naming the few an exercise wanted — two lists that could
+  // disagree, and did.
   const sel = $("examples");
   sel.innerHTML = "";
   const asg = document.createElement("optgroup");
@@ -1340,12 +1338,12 @@ function loadCatalogue() {
   }
   sel.appendChild(asg);
 
-  // Free play belongs to this repository, not to an exercise. An exercise
-  // says which tasks it consists of, and offering it Spark and vector-clock
-  // examples alongside them undoes that: Assignment 1 is about MapReduce and
-  // RPC, and a dropdown listing two other topics tells a student they are
-  // behind on work that is not theirs.
-  if (only.trim()) return;
+  // Free play belongs to a bare checkout of the language, not to an
+  // exercise. Offering Spark and vector-clock examples beside an exercise's
+  // own tasks undoes what that exercise is: Assignment 1 is about MapReduce
+  // and RPC, and a dropdown listing two other topics tells a student they
+  // are behind on work that is not theirs.
+  if (assignments.length) return;
 
   // No MapReduce demos here: they would give away the graded tasks.
   const groups = {

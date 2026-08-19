@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import errno
-import html
 import json
 import os
 import pathlib
@@ -78,13 +77,12 @@ def _reconcile(root: pathlib.Path, saved: dict) -> dict:
 
     Two rules, and the second is the important one. A task this exercise now
     has is added if it is missing. A file this exercise does not have is
-    removed *only* when its text is one the package still ships — that is,
+    removed *only* when its text is one the exercise still ships — that is,
     when it is a starter nobody has touched. Anything else was written by the
     student and stays, whatever it is called, because the cost of being wrong
     in that direction is their work.
     """
-    shipped = {path.read_text() for path in assets.tasks_dir().glob("*")
-               if path.is_file()} if assets.tasks_dir().is_dir() else set()
+    shipped = set(seed(root).values())
 
     files = {name: text for name, text in saved.items()
              if name in seed(root) or text not in shipped}
@@ -103,11 +101,16 @@ def seed(root: pathlib.Path) -> dict:
     """
     What a brand-new workspace starts with.
 
-    A checkout with a `src/` directory is being used for authoring — that is
-    where an exercise's own starters are written and tested as ordinary files —
-    so its contents win. A student checkout has none, and starts from the
-    starters that ship with the installed package.
+    One tab per task, opened on that task's starter — which is a string on
+    the task, not a file in the checkout, so there is nothing here for a
+    student to edit around the editor. Plus the data files those tasks read,
+    which are ordinary files because they are input rather than program text.
+
+    A checkout with a `src/` directory is being used for authoring, and its
+    contents win.
     """
+    from .assignment import ASSIGNMENTS
+
     files = {}
     loose = root / "src"
     if loose.is_dir():
@@ -116,33 +119,27 @@ def seed(root: pathlib.Path) -> dict:
                 files[path.name] = path.read_text()
         return files
 
-    tasks = assets.tasks_dir()
+    for name, task in ASSIGNMENTS.items():
+        files[f"{name}.ds"] = task.starter
+        for extra, text in task.extra_files.items():
+            files[extra] = text
+
+    tasks = root / "tasks"
     if not tasks.is_dir():
         return files
 
-    # This exercise's starters, and nothing else. The package ships every task
-    # the course has; opening the Spark exercise on a set of tabs that includes
-    # a word-count MapReduce would undo the scoping the dropdown does.
-    wanted = set(exercise.task_names(root))
-    starters = {path.stem: path.read_text()
-                for path in sorted(tasks.glob("*.ds")) if path.stem in wanted}
-    # A data file ships when one of this exercise's starters names it. The
-    # rule used to be "every data file, always", on the grounds that nothing
-    # recorded which task read which — but something does: the task that opens
-    # chunk001.txt says so, in the line that opens it. Without this the Spark
-    # exercise's CSVs turned up in a MapReduce workspace, which is the same
-    # unscoping the dropdown exists to prevent, one directory lower.
-    named = "\n".join(starters.values())
+    # This exercise's starters, and nothing else. A `tasks/` directory can
+    # hold a file the exercise's `tasks.py` does not list — a draft, or one
+    # withdrawn for a term — and the dropdown is the list, not the directory.
+    # A data file ships when one of this exercise's starters names it — the
+    # task that opens chunk001.txt says so, in the line that opens it. Without
+    # this the Spark exercise's CSVs turned up in a MapReduce workspace.
+    named = "\n".join(task.starter for task in ASSIGNMENTS.values())
 
     for path in sorted(tasks.iterdir()):
-        if not path.is_file() or path.name.startswith("."):
-            continue
-        if path.suffix == ".ds":
-            if path.stem not in wanted:
-                continue
-        elif path.name not in named:
-            continue
-        files[path.name] = path.read_text()
+        if (path.is_file() and not path.name.startswith(".")
+                and path.suffix != ".ds" and path.name in named):
+            files[path.name] = path.read_text()
     return files
 
 
@@ -207,10 +204,18 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/exercise":
             # So that a server starting up can say who already has the port,
             # rather than reporting a number the student then has to hunt for.
+            here = self.root / "tasks"
             self._json(200, {"dsviz": True,
                              "title": exercise.title(self.root),
                              "root": str(self.root),
-                             "tasks": exercise.task_names(self.root)})
+                             "tasks": exercise.task_names(self.root),
+                             # The data a task reads. Starters are not here:
+                             # they ride on the task, in the manifest.
+                             "data": sorted(
+                                 p.name for p in here.iterdir()
+                                 if p.is_file() and p.suffix != ".ds"
+                                 and not p.name.startswith("."))
+                             if here.is_dir() else []})
             return
         if self.path in ("/", "/index.html"):
             self._send_page()
@@ -230,8 +235,19 @@ class Handler(SimpleHTTPRequestHandler):
         static handler rather than being resolved — a path that escapes the
         directory is refused before it is a path at all.
         """
+        # The exercise's manifest, which the page fetches and runs to find
+        # out which tasks exist. Served by name so nothing else in the
+        # checkout becomes reachable by asking for it.
+        if self.path.split("?")[0] == "/tasks.py":
+            candidate = self.root / "tasks.py"
+            return candidate if candidate.is_file() else None
+
         for prefix, where in (("/dsviz/", assets.modules_dir()),
-                              ("/tasks/", assets.tasks_dir())):
+                              ("/tasks/", self.root / "tasks")):
+            # Starters are not served: they are strings on the task, and the
+            # page gets them with the manifest. Only the data a task reads.
+            if prefix == "/tasks/" and self.path.endswith(".ds"):
+                return None
             if not self.path.startswith(prefix):
                 continue
             name = self.path[len(prefix):].split("?")[0]
@@ -246,9 +262,9 @@ class Handler(SimpleHTTPRequestHandler):
         """
         The editor, told which tasks this exercise consists of.
 
-        The list is injected as it is served rather than written into the
-        packaged page: one page serves every exercise, and a page edited on
-        disk would be a per-exercise copy of the editor again.
+        Which tasks exist is not injected here any more — the page fetches
+        the exercise's own `tasks.py` and runs it, so there is one list
+        rather than a list and a copy of it in a meta tag.
         """
         page = (assets.web_dir() / "index.html").read_text()
         # Which repository the commit button pushes back to. Read from git
@@ -259,11 +275,6 @@ class Handler(SimpleHTTPRequestHandler):
         if slug:
             page = page.replace('<meta name="dsviz-repo" content="">',
                                 f'<meta name="dsviz-repo" content="{slug}">', 1)
-        names = ",".join(exercise.task_names(self.root))
-        renamed = html.escape(json.dumps(exercise.titles(self.root)), quote=True)
-        tag = (f'<meta name="dsviz-tasks" content="{names}">\n'
-               f'<meta name="dsviz-titles" content=\'{renamed}\'>\n')
-        page = page.replace("</head>", tag + "</head>", 1)
         body = page.encode()
         self.send_response(200)
         self.send_header("content-type", "text/html; charset=utf-8")
@@ -524,19 +535,15 @@ def grade() -> int:
 
 
 def tasks() -> int:
-    from .assignment import ASSIGNMENTS
-
     root = project_root()
-    for name in exercise.task_names(root):
-        print(f"{name:<16} "
-              f"{exercise.title_for(root, name, ASSIGNMENTS[name].title)}")
-    missing = exercise.unknown_tasks(root)
-    if missing:
-        # A name that no longer exists is dropped from the editor silently, so
-        # this is the one place it can be noticed before a student does.
-        print(f"\nnot in this dsviz: {', '.join(missing)}", file=sys.stderr)
-        print("upgrade with: uv lock --upgrade-package dsviz", file=sys.stderr)
+    headings = exercise.titles(root)
+    if not headings:
+        print("this exercise declares no tasks — is there a tasks.py?",
+              file=sys.stderr)
         return 1
+    print(exercise.title(root) or str(root))
+    for name, heading in headings.items():
+        print(f"  {name:<16} {heading}")
     return 0
 
 
@@ -548,9 +555,13 @@ def main(argv: list[str] | None = None) -> int:
     p_serve = sub.add_parser("serve", help="open the editor on this exercise")
     p_serve.add_argument("port", nargs="?", type=int, default=8000)
     sub.add_parser("grade", help="score what is in result/")
-    sub.add_parser("tasks", help="list the tasks this version ships")
+    sub.add_parser("tasks", help="list this exercise's tasks")
 
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+    # Every command works on the exercise in this checkout, and there are no
+    # tasks until it says what they are.
+    if args.command in ("serve", "grade", "tasks"):
+        exercise.load(project_root())
     if args.command == "serve":
         return serve(args.port)
     if args.command == "grade":

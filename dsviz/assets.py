@@ -1,11 +1,13 @@
 """
-Where the tasks and the editor live, in a checkout and in an install.
+Where the editor lives, in a checkout and in an install.
 
-The package is used two ways. In this repository it sits beside `tasks/` and
-`web/`, which is what the test suite and the authoring loop see. Installed from
-git with `uv add`, there is no repository around it — a wheel is only what was
-put inside it — so those two directories are copied into the package itself as
-`_tasks/` and `_web/`.
+The package is used two ways. In this repository it sits beside `web/`, which
+is what the test suite and the authoring loop see. Installed from git with
+`uv add`, there is no repository around it — a wheel is only what was put
+inside it — so that directory is copied into the package itself as `_web/`.
+
+Starters are not here. They belong to the exercise, in its own `tasks/`, and
+the package has none of its own to resolve.
 
 Both layouts are real, so neither is the special case. Each lookup prefers the
 bundled copy and falls back to the sibling directory, which means the same code
@@ -24,11 +26,6 @@ def _resolve(bundled: str, source: str) -> pathlib.Path:
     """The bundled directory if this is an install, the sibling if not."""
     inside = PACKAGE / bundled
     return inside if inside.is_dir() else _REPO / source
-
-
-def tasks_dir() -> pathlib.Path:
-    """The `.ds` starters and the data files a task reads."""
-    return _resolve("_tasks", "tasks")
 
 
 def web_dir() -> pathlib.Path:

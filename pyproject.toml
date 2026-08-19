@@ -41,7 +41,6 @@ packages = ["dsviz"]
 # the server serves those modules out of the installed package, so a copy of
 # them in the wheel would be a second one that could fall behind.
 [tool.hatch.build.targets.wheel.force-include]
-"tasks" = "dsviz/_tasks"
 "web/index.html" = "dsviz/_web/index.html"
 "web/app.js" = "dsviz/_web/app.js"
 "web/style.css" = "dsviz/_web/style.css"
@@ -49,5 +48,5 @@ packages = ["dsviz"]
 "web/examples.js" = "dsviz/_web/examples.js"
 
 [tool.hatch.build.targets.sdist]
-include = ["dsviz", "tasks", "web", "tests", "README.md", "pyproject.toml"]
+include = ["dsviz", "web", "tests", "README.md", "pyproject.toml"]
 exclude = ["web/dsviz"]

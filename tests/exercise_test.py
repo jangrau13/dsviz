@@ -1,11 +1,10 @@
 """
-An exercise gets its own tasks, under its own numbering.
+An exercise is a checkout with a `tasks.py` in it.
 
-One installed package ships every task the course has. Three exercises each
-show a few of them, numbered from one, and none of them should present a task
-belonging to another. That scoping is the only thing standing between "three
-independent exercises" and "one dropdown with everything in it", so it is
-worth a test rather than a convention.
+dsviz ships no tasks. What this checks is the loader: that an exercise's own
+manifest decides which tasks exist, in what order, under what headings — and
+that a workspace saved before that list changed is brought up to date without
+taking a student's work with it.
 """
 
 import json
@@ -13,11 +12,11 @@ import pathlib
 import sys
 import tempfile
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from dsviz import exercise                                      # noqa: E402
-from dsviz.assignment import ASSIGNMENTS                        # noqa: E402
+import fixture                                              # noqa: E402
+from dsviz import cli, exercise                             # noqa: E402
 
 failures = []
 
@@ -28,116 +27,68 @@ def ok(label, passed, detail=""):
     print(f"{'ok  ' if passed else 'FAIL'} {label}" + (f" — {detail}" if detail else ""))
 
 
-def make(tmp: pathlib.Path, body: str) -> pathlib.Path:
-    root = pathlib.Path(tempfile.mkdtemp(dir=tmp))
-    (root / "pyproject.toml").write_text(body)
-    return root
+FIXTURE = fixture.EXERCISE
 
+# --- the manifest is the list -------------------------------------------
+tasks = exercise.load(FIXTURE)
+ok("an exercise's tasks are its own tasks.py",
+   list(tasks) == ["fx-takings", "fx-busiest", "fx-calls", "fx-ticks",
+                   "fx-stages"], ", ".join(tasks))
+ok("in the order that file lists them",
+   list(tasks)[0] == "fx-takings" and list(tasks)[-1] == "fx-stages")
+ok("under the headings it writes",
+   exercise.titles(FIXTURE)["fx-calls"] == "Fixture: one machine asking another",
+   exercise.titles(FIXTURE)["fx-calls"])
+ok("and the exercise has a name of its own",
+   exercise.title(FIXTURE) == "Fixture — one task per dialect",
+   exercise.title(FIXTURE))
 
+# A checkout with no manifest has no tasks, and says so by being empty rather
+# than by raising: the editor reports an empty dropdown, not a crash.
 with tempfile.TemporaryDirectory() as tmp:
-    tmp = pathlib.Path(tmp)
+    bare = pathlib.Path(tmp)
+    ok("a checkout with no tasks.py has no tasks",
+       exercise.task_names(bare) == [] and exercise.title(bare) == "")
 
-    # No manifest at all: this repository itself, where every task is wanted.
-    bare = pathlib.Path(tempfile.mkdtemp(dir=tmp))
-    ok("no manifest offers every task",
-       exercise.task_names(bare) == list(ASSIGNMENTS))
+exercise.load(FIXTURE)      # the empty checkout above cleared the registry
 
-    spark = make(tmp, '''
-[project]
-name = "assignment-2"
-version = "0"
+# --- the workspace opens on this exercise's tasks ------------------------
+seeded = cli.seed(FIXTURE)
+starters = sorted(n for n in seeded if n.endswith(".ds"))
+ok("the workspace opens on this exercise's tasks only",
+   starters == sorted(f"{n}.ds" for n in tasks), ", ".join(starters))
+ok("a data file ships when one of this exercise's tasks names it",
+   "readings.txt" in seeded,
+   ", ".join(sorted(n for n in seeded if not n.endswith(".ds"))))
 
-[tool.dsviz]
-title = "Assignment 2"
-tasks = ["a2-wordcount", "a2-telemetry", "a2-kmeans"]
+# --- a saved workspace is brought up to date -----------------------------
+# Tasks get renamed and exercises get rescoped. A workspace saved before
+# either keeps its tabs, and those tabs are files a student is invited to work
+# in. Untouched starters go; anything they might have written stays.
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    (root / "tasks").mkdir()
+    for name, text in seeded.items():
+        (root / "tasks" / name).write_text(text)
+    (FIXTURE / "tasks.py").read_text()
+    (root / "tasks.py").write_text((FIXTURE / "tasks.py").read_text())
 
-[tool.dsviz.titles]
-"a2-wordcount" = "Task 1: word count in Spark"
-''')
-    ok("an exercise offers only its own tasks",
-       exercise.task_names(spark) == ["a2-wordcount", "a2-telemetry", "a2-kmeans"],
-       str(exercise.task_names(spark)))
-    ok("another exercise's task is not offered",
-       "a1-wordcount" not in exercise.task_names(spark))
-    ok("declared order is kept",
-       exercise.task_names(spark)[0] == "a2-wordcount",
-       "the dropdown reads in the order the exercise wrote")
-    ok("an exercise can renumber a task",
-       exercise.title_for(spark, "a2-wordcount", "x") == "Task 1: word count in Spark")
-    ok("a task it did not rename keeps the package's title",
-       exercise.title_for(spark, "a2-telemetry", ASSIGNMENTS["a2-telemetry"].title)
-       == ASSIGNMENTS["a2-telemetry"].title)
-
-    # A name the package no longer has must not take the editor down with it;
-    # it is dropped, and `dsviz tasks` is where it surfaces.
-    stale = make(tmp, '''
-[project]
-name = "assignment-x"
-version = "0"
-
-[tool.dsviz]
-tasks = ["a2-wordcount", "t99-does-not-exist"]
-''')
-    ok("a task that no longer exists is dropped, not raised",
-       exercise.task_names(stale) == ["a2-wordcount"])
-    ok("and is reported so it can be fixed",
-       exercise.unknown_tasks(stale) == ["t99-does-not-exist"])
-
-    # A broken manifest must not stop a student working.
-    broken = make(tmp, "[tool.dsviz\ntasks = [")
-    ok("an unparseable manifest falls back to every task",
-       exercise.task_names(broken) == list(ASSIGNMENTS))
-
-    # The titles reach the browser as JSON in a meta tag, so they have to
-    # survive being serialised — an em dash or a quote in a heading included.
-    quoted = make(tmp, '''
-[project]
-name = "a"
-version = "0"
-
-[tool.dsviz]
-tasks = ["a3-vector"]
-
-[tool.dsviz.titles]
-"a3-vector" = 'Task 2: "happened before" — and what it cannot tell you'
-''')
-    round_trip = json.loads(json.dumps(exercise.titles(quoted)))
-    ok("a heading with quotes and dashes survives the trip to the page",
-       round_trip["a3-vector"].startswith('Task 2: "happened before"'),
-       round_trip["a3-vector"])
-
-    # The tabs the editor opens on must be scoped the same way the dropdown
-    # is, or the scoping is cosmetic.
-    from dsviz import cli
-
-    seeded = cli.seed(spark)
-    starters = sorted(n for n in seeded if n.endswith(".ds"))
-    ok("the workspace opens on this exercise's tasks only",
-       starters == sorted(["a2-wordcount.ds", "a2-telemetry.ds", "a2-kmeans.ds"]),
-       ", ".join(starters))
-    ok("a data file ships when one of this exercise's tasks names it",
-       "climate.csv" in seeded and "chunk002.txt" not in seeded,
-       ", ".join(sorted(n for n in seeded if not n.endswith(".ds"))))
-
-    # A workspace saved before a rename keeps its tabs, and those tabs are
-    # files a student is invited to work in. Untouched starters go; anything
-    # they might have written stays, whatever it is called.
     stale = dict(seeded)
-    stale["t3-spark.ds"] = seeded["a2-wordcount.ds"]     # renamed, untouched
+    stale["fx-old-name.ds"] = seeded["fx-calls.ds"]      # renamed, untouched
     stale["scratch.ds"] = "def mine(x: int) -> int:\n    return x\n"
-    del stale["a2-kmeans.ds"]                            # a tab they closed
+    del stale["fx-ticks.ds"]                            # a tab they closed
 
-    (spark / ".dsviz").mkdir(exist_ok=True)
-    (spark / ".dsviz" / "workspace.json").write_text(
+    (root / ".dsviz").mkdir()
+    (root / ".dsviz" / "workspace.json").write_text(
         json.dumps({"version": 1, "files": stale}))
-    fresh = cli.load_workspace(spark)
+    fresh = cli.load_workspace(root)
 
     ok("a renamed task's untouched starter is not kept as a second tab",
-       "t3-spark.ds" not in fresh, ", ".join(sorted(fresh)))
+       "fx-old-name.ds" not in fresh, ", ".join(sorted(fresh)))
     ok("a file the student wrote is kept, whatever it is called",
        fresh.get("scratch.ds") == stale["scratch.ds"])
     ok("a task this exercise has is opened even if it was not saved",
-       "a2-kmeans.ds" in fresh)
+       "fx-ticks.ds" in fresh)
 
 print("ALL EXERCISE TESTS PASSED" if not failures
       else f"{len(failures)} FAILED: {', '.join(failures)}")

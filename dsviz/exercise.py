@@ -1,85 +1,65 @@
 """
-Which tasks an exercise consists of.
+What an exercise is, from the outside.
 
-One installed package ships every task the course has, and each exercise wants
-a few of them: the Spark exercise has no business offering a word-count
-MapReduce in its dropdown. Rather than cutting the package up per exercise —
-three packages to keep in step, which is the problem the package was meant to
-end — an exercise names the tasks it wants and everything else stays hidden.
+An exercise is a checkout with a `tasks.py` in it. That file says what the
+exercise is called and which tasks it consists of, in the order it wants them
+shown, and dsviz has none of its own — the language, the simulator, the editor
+and the grader are general, and the tasks are somebody's course.
 
-    # pyproject.toml, in the exercise
-    [tool.dsviz]
-    title = "Assignment 2 — Spark"
-    tasks = ["a2-wordcount", "a2-telemetry"]
+    # tasks.py, in the exercise
+    TITLE = "Assignment 2 — Spark"
+    TASKS = [SPARK_MEMORY, TELEMETRY, KMEANS]
 
-    [tool.dsviz.titles]
-    "a2-wordcount" = "Task 1: word count in Spark"
-
-The declaration lives in the exercise's own `pyproject.toml` because that file
-already has to exist to depend on dsviz at all, and a second config file would
-be a second thing to forget. An exercise that names nothing gets everything,
-which is what a bare checkout of this repository wants.
+This module used to be a scoping mechanism: one package shipped every task the
+course had, and each exercise named the few it wanted in `[tool.dsviz]`. That
+premise is gone. An exercise cannot name a task it does not have, so there is
+nothing left to scope and nothing left to go out of step.
 """
 
 from __future__ import annotations
 
 import pathlib
-import tomllib
 
 
-def config(root: pathlib.Path) -> dict:
-    """The `[tool.dsviz]` table of the exercise at `root`, or an empty one."""
-    manifest = root / "pyproject.toml"
-    if not manifest.is_file():
-        return {}
-    try:
-        data = tomllib.loads(manifest.read_text())
-    except (tomllib.TOMLDecodeError, OSError):
-        return {}
-    table = data.get("tool", {}).get("dsviz", {})
-    return table if isinstance(table, dict) else {}
+def load(root: pathlib.Path) -> dict:
+    """Load this exercise's tasks and return them, keyed by name."""
+    from .assignment import load_exercise
+
+    return load_exercise(root)
 
 
 def task_names(root: pathlib.Path) -> list[str]:
-    """
-    The tasks this exercise offers, in the order it wants them shown.
-
-    Names that no longer exist are dropped rather than raising: a task renamed
-    in the package should leave the exercise offering one task fewer, not
-    refusing to start. `dsviz tasks` is where the mismatch is meant to show up.
-    """
-    from .assignment import ASSIGNMENTS
-
-    declared = config(root).get("tasks")
-    if not declared:
-        return list(ASSIGNMENTS)
-    return [n for n in declared if n in ASSIGNMENTS]
-
-
-def unknown_tasks(root: pathlib.Path) -> list[str]:
-    """Declared names the installed package does not have."""
-    from .assignment import ASSIGNMENTS
-
-    return [n for n in (config(root).get("tasks") or []) if n not in ASSIGNMENTS]
+    """The tasks this exercise offers, in the order it wants them shown."""
+    return list(load(root))
 
 
 def titles(root: pathlib.Path) -> dict:
     """
-    What this exercise calls each task, where that differs from the package.
+    What this exercise calls each task.
 
     A task is reusable across exercises; its number is not. Vector clocks are
-    the fourth thing the course covers and the second thing this exercise
-    asks for, and a student reading "Task 4" in an exercise with three tasks
-    is being told something untrue. The package keeps a stable id, the
-    exercise supplies the heading.
+    the fourth thing the course covers and the second thing one exercise asks
+    for, and a student reading "Task 4" in an exercise with three tasks is
+    being told something untrue. The heading is the exercise's to write, which
+    is why it sits beside the task rather than in the language.
     """
-    given = config(root).get("titles", {})
-    return {k: str(v) for k, v in given.items()} if isinstance(given, dict) else {}
+    return {name: task.title for name, task in load(root).items()}
 
 
-def title_for(root: pathlib.Path, name: str, default: str) -> str:
+def title_for(root: pathlib.Path, name: str, default: str = "") -> str:
+    """This exercise's heading for one task."""
     return titles(root).get(name, default)
 
 
 def title(root: pathlib.Path) -> str:
-    return str(config(root).get("title", ""))
+    """What the exercise as a whole is called."""
+    import importlib.util
+
+    manifest = pathlib.Path(root) / "tasks.py"
+    if not manifest.is_file():
+        return ""
+    spec = importlib.util.spec_from_file_location("dsviz_exercise_title",
+                                                  manifest)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return str(getattr(module, "TITLE", ""))

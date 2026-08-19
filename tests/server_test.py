@@ -13,6 +13,7 @@ not prove the routes are wired to them.
 """
 
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -25,35 +26,11 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 
-SOLUTION = '''def tokenize(key: string, value: string) -> void:
-    for word: string in split(lower(value)):
-        emit(word, 1)
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import fixture                                              # noqa: E402
 
-def total(key: string, values: [int]) -> int:
-    return sum(values)
-
-def byKey(key: string, n: int) -> int:
-    return hash(key) mod n
-
-
-@mapper
-class Worker:
-    pass
-
-@reducer
-class Collector:
-    pass
-
-m1 = Worker(speed=1.0)
-m2 = Worker(speed=1.0)
-r1 = Collector(speed=1.0)
-r2 = Collector(speed=1.0)
-
-world = World(machines=[m1, m2, r1, r2])
-
-job = MapReduce(map=tokenize, reduce=total, partition=byKey)
-world.run(job)
-'''
+SOLUTION = fixture.SOLUTION
+TASK = "fx-takings"
 
 
 def request(url, *, method="GET", body=None):
@@ -74,14 +51,15 @@ def request(url, *, method="GET", body=None):
         return err.code, payload(err.read())
 
 
-# A checkout with the shape the server expects: an app/ holding the package
-# and the task sources, and nothing else.
+# A checkout with the shape the server expects: an exercise, which is a
+# directory with a `tasks.py` and the starters it names. Nothing else — the
+# server is `dsviz serve`, run against it the way a student runs it.
 root = pathlib.Path(tempfile.mkdtemp(prefix="dsviz-server-"))
-(root / "app").mkdir()
-shutil.copytree(HERE / "dsviz", root / "app" / "dsviz")
-shutil.copytree(HERE / "tasks", root / "app" / "tasks")
-(root / ".devcontainer").mkdir()
-shutil.copy(HERE / "server" / "serve.py", root / ".devcontainer" / "serve.py")
+shutil.copytree(fixture.EXERCISE / "tasks", root / "tasks")
+shutil.copy(fixture.EXERCISE / "tasks.py", root / "tasks.py")
+(root / "pyproject.toml").write_text(
+    '[project]\nname = "fixture"\nversion = "0"\n')
+
 
 def free_port() -> int:
     """
@@ -100,8 +78,10 @@ def free_port() -> int:
 
 
 PORT = free_port()
-proc = subprocess.Popen([sys.executable, str(root / ".devcontainer" / "serve.py"),
-                         str(PORT)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+# The real entry point, run from the exercise the way a student runs it.
+proc = subprocess.Popen([sys.executable, "-m", "dsviz.cli", "serve", str(PORT)],
+                        cwd=str(root), env={**os.environ, "PYTHONPATH": str(HERE)},
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 base = f"http://127.0.0.1:{PORT}"
 for _ in range(80):
     if proc.poll() is not None:
@@ -119,15 +99,15 @@ try:
     print("=== a fresh workspace starts from the task starters ===")
     status, body = request(f"{base}/api/workspace")
     assert status == 200, status
-    assert "a1-wordcount.ds" in body["files"], sorted(body["files"])
+    assert f"{TASK}.ds" in body["files"], sorted(body["files"])
     print(f"ok — {len(body['files'])} starter(s) served, no src/ needed")
 
     print("\n=== work put in comes back out ===")
-    status, _ = request(f"{base}/api/workspace/a1-wordcount.ds",
+    status, _ = request(f"{base}/api/workspace/{TASK}.ds",
                         method="PUT", body=SOLUTION)
     assert status == 200, status
     status, body = request(f"{base}/api/workspace")
-    assert body["files"]["a1-wordcount.ds"] == SOLUTION, "the workspace lost the edit"
+    assert body["files"][f"{TASK}.ds"] == SOLUTION, "the workspace lost the edit"
     assert (root / ".dsviz" / "workspace.json").exists(), "nothing was persisted"
     print("ok — saved, persisted to .dsviz/workspace.json, and served back")
 
@@ -138,25 +118,25 @@ try:
         print(f"refused: PUT {path}")
     assert not (root.parent / "escape.ds").exists()
 
-    print("\n=== handing in writes solutions/, and only the server does ===")
-    assert not (root / "solutions").exists(), "solutions/ exists before any hand-in"
-    status, body = request(f"{base}/api/handin/a1-wordcount",
+    print("\n=== handing in writes result/, and only the server does ===")
+    assert not (root / "result").exists(), "result/ exists before any hand-in"
+    status, body = request(f"{base}/api/handin/{TASK}",
                            method="POST", body=SOLUTION)
     assert status == 200, body
-    written = root / "solutions" / "a1-wordcount.ds"
+    written = root / "result" / f"{TASK}.ds"
     assert written.exists(), "the hand-in wrote nothing"
     print(f"ok — wrote {body['handed_in']}")
 
     print("\n=== what it wrote is evidence the code ran ===")
     from dsviz import attest
-    reasons = attest.verify("a1-wordcount", written.read_text())
+    reasons = attest.verify(TASK, written.read_text())
     assert reasons == [], reasons
     # And the same code without going through the server is not.
-    assert attest.verify("a1-wordcount", SOLUTION), "an unstamped copy verified"
+    assert attest.verify(TASK, SOLUTION), "an unstamped copy verified"
     print("ok — the written file verifies; the same code copied by hand does not")
 
     print("\n=== a hand-in of code that does not run is refused ===")
-    status, body = request(f"{base}/api/handin/a1-wordcount",
+    status, body = request(f"{base}/api/handin/{TASK}",
                            method="POST", body="def broken(")
     assert status == 400, status
     assert written.read_text() != "def broken(", "the bad hand-in overwrote the good one"

@@ -19,6 +19,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import fixture  # noqa: E402  dsviz ships no tasks; this brings some
+
 from dsviz.assignment import ASSIGNMENTS, judge_assignment          # noqa: E402
 
 failures = []
@@ -34,37 +37,16 @@ def verdict(task, src, holdout=False):
     return json.loads(judge_assignment(task, src, holdout))
 
 
-WORLD = '''@mapper
-class Worker:
-    pass
+WORLD = ASSIGNMENTS["fx-takings"].starter
 
-@reducer
-class Collector:
-    pass
-
-m1 = Worker(speed=1.0)
-r1 = Collector(speed=1.0)
-
-world = World(machines=[m1, r1])
-'''
-
-FUNCS = '''def tokenize(key: string, value: string) -> void:
-    for word: string in split(lower(value)):
-        emit(word, 1)
-
-def total(key: string, values: [int]) -> int:
-    return sum(values)
-
-def byKey(key: string, n: int) -> int:
-    return hash(key) mod n
-'''
+FUNCS = fixture.FUNCS
 
 # --- the old syntax is gone, not merely discouraged ----------------------
 # Functions named `map`, `reduce` and `partition`, no job line. This is what
 # the previous reference solution looked like, and it used to score.
 OLD = '''def map(key: string, value: string) -> void:
-    for word: string in split(lower(value)):
-        emit(word, 1)
+    for branch: string in split(value):
+        emit(branch, 1)
 
 def reduce(key: string, values: [int]) -> int:
     sum(values)
@@ -72,7 +54,7 @@ def reduce(key: string, values: [int]) -> int:
 def partition(key: string, n: int) -> int:
     hash(key) mod n
 '''
-old = verdict("a1-wordcount", OLD, holdout=True)
+old = verdict("fx-takings", OLD, holdout=True)
 ok("binding roles by function name no longer works",
    old["verdict"] == "CE", f"{old['verdict']}: {old['cases'][0]['message'][:60]}")
 ok("and it scores nothing rather than most of it",
@@ -81,10 +63,10 @@ ok("and it scores nothing rather than most of it",
 # --- each position must be filled ---------------------------------------
 for omitted in ("map", "reduce", "partition"):
     wiring = ", ".join(f"{r}={n}" for r, n in
-                       (("map", "tokenize"), ("reduce", "total"),
-                        ("partition", "byKey")) if r != omitted)
+                       (("map", "perDay"), ("reduce", "addUp"),
+                        ("partition", "spread")) if r != omitted)
     src = f"{FUNCS}\n{WORLD}\njob = MapReduce({wiring})\nworld.run(job)\n"
-    got = verdict("a1-wordcount", src)
+    got = verdict("fx-takings", src)
     ok(f"a job with no {omitted} is refused", got["verdict"] == "CE",
        got["cases"][0]["message"][:70])
 
@@ -95,9 +77,9 @@ for omitted in ("map", "reduce", "partition"):
 for role in ("map", "reduce", "partition"):
     wiring = ", ".join(
         f"{r}=" + ("nosuch" if r == role else n) for r, n in
-        (("map", "tokenize"), ("reduce", "total"), ("partition", "byKey")))
+        (("map", "perDay"), ("reduce", "addUp"), ("partition", "spread")))
     src = f"{FUNCS}\n{WORLD}\njob = MapReduce({wiring})\nworld.run(job)\n"
-    got = verdict("a1-wordcount", src)
+    got = verdict("fx-takings", src)
     message = got["cases"][0]["message"]
     ok(f"a job naming no such function as the {role} is refused",
        got["verdict"] == "CE" and "nosuch" in message, message[:70])
@@ -105,15 +87,15 @@ for role in ("map", "reduce", "partition"):
 # The check that catches a genuinely misplaced emit must still fire: only the
 # function passed as the mapper may emit.
 STRAY = FUNCS + "\ndef alsoEmits(key: string, value: string) -> void:\n    emit(key, 1)\n"
-src = f"{STRAY}\n{WORLD}\njob = MapReduce(map=tokenize, reduce=total, partition=byKey)\nworld.run(job)\n"
-got = verdict("a1-wordcount", src)
+src = f"{STRAY}\n{WORLD}\njob = MapReduce(map=perDay, reduce=addUp, partition=spread)\nworld.run(job)\n"
+got = verdict("fx-takings", src)
 ok("a function that is not the mapper still may not emit",
    got["verdict"] == "CE" and "emit" in got["cases"][0]["message"],
    got["cases"][0]["message"][:70])
 
 # --- the complete thing still works -------------------------------------
-whole = f"{FUNCS}\n{WORLD}\njob = MapReduce(map=tokenize, reduce=total, partition=byKey)\nworld.run(job)\n"
-got = verdict("a1-wordcount", whole)
+whole = f"{FUNCS}\n{WORLD}\njob = MapReduce(map=perDay, reduce=addUp, partition=spread)\nworld.run(job)\n"
+got = verdict("fx-takings", whole)
 ok("a properly wired submission still passes", got["verdict"] == "AC",
    f"{got['score']:g}/{got['max_score']:g}")
 

@@ -12,40 +12,16 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import fixture  # noqa: E402,F401  dsviz ships no tasks; this brings some
 
 from dsviz import attest                                          # noqa: E402
 
-# The reference solution, kept here rather than in a shipped module.
-SOLUTION = '''def tokenize(key: string, value: string) -> void:
-    for word: string in split(lower(value)):
-        emit(word, 1)
+# The submission the stamp is taken of. It comes from the fixture exercise,
+# because dsviz has no tasks of its own to be the reference for.
+SOLUTION = fixture.SOLUTION
 
-def total(key: string, values: [int]) -> int:
-    return sum(values)
-
-def byKey(key: string, n: int) -> int:
-    return hash(key) mod n
-
-
-@mapper
-class Worker:
-    pass
-
-@reducer
-class Collector:
-    pass
-
-m1 = Worker(speed=1.0)
-m2 = Worker(speed=1.0)
-r1 = Collector(speed=1.0)
-r2 = Collector(speed=1.0)
-
-world = World(machines=[m1, m2, r1, r2])
-
-job = MapReduce(map=tokenize, reduce=total, partition=byKey)
-world.run(job)
-'''
-TASK = "a1-wordcount"
+TASK = "fx-takings"
 
 print("=== a stamped hand-in verifies ===")
 stamped = attest.stamp(TASK, SOLUTION, at="2026-08-19T09:00:00+00:00", runs=100)
@@ -56,7 +32,7 @@ print("\n=== the digest is of the run, not of the text ===")
 # Same code twice must agree, or CI would reject honest submissions at random.
 assert attest.trace_sha(SOLUTION, TASK) == attest.trace_sha(SOLUTION, TASK)
 # Different code must disagree, or the digest would attest to nothing.
-other = SOLUTION.replace("Worker(speed=1.0)\nm2", "Worker(speed=0.2)\nm2")
+other = SOLUTION.replace("m2 = Till(speed=1.0)", "m2 = Till(speed=0.2)")
 assert other != SOLUTION
 assert attest.trace_sha(other, TASK) != attest.trace_sha(SOLUTION, TASK)
 print("ok — reproducible for the same code, different for different code")
@@ -69,7 +45,7 @@ CASES = {
     "code edited after handing in":
         stamped.replace("sum(values)", "sum(values) + 0"),
     "a record lifted from another task":
-        attest.stamp("extra-combiner", SOLUTION, at="", runs=1),
+        attest.stamp("fx-busiest", SOLUTION, at="", runs=1),
 }
 for label, text in CASES.items():
     reasons = attest.verify(TASK, text)

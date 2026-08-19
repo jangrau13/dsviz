@@ -11,6 +11,7 @@ accident: `tasks/` happens to sit next to `dsviz/` here and nowhere else.
 
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,13 +33,15 @@ def ok(label, passed, detail=""):
 
 from dsviz import assets                                        # noqa: E402
 
-ok("tasks resolve in a checkout", assets.tasks_dir().is_dir(), str(assets.tasks_dir()))
 ok("the editor resolves in a checkout", (assets.web_dir() / "index.html").is_file())
 ok("the engine is the package itself",
    (assets.modules_dir() / "core.py").is_file())
 
 # Every task the catalogue offers must have a starter to open with, or the
 # editor shows an empty tab and the student has nothing to edit.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import fixture  # noqa: E402  dsviz ships no tasks; this brings some
+
 from dsviz.assignment import ASSIGNMENTS                        # noqa: E402
 
 missing = [n for n, a in ASSIGNMENTS.items() if not a.starter.strip()]
@@ -99,12 +102,11 @@ with tempfile.TemporaryDirectory() as tmp:
     else:
         names = set(zipfile.ZipFile(wheel).namelist())
 
-        # The starters and their data files, inside the package.
-        shipped = {n.split("/")[-1] for n in names if "/_tasks/" in n}
-        wanted = {p.name for p in assets.tasks_dir().iterdir()
-                  if p.is_file() and not p.name.startswith(".")}
-        ok("the wheel ships every task file", wanted <= shipped,
-           f"missing {sorted(wanted - shipped)}")
+        # No tasks. The wheel is the language, and a task file inside it
+        # would be somebody's course shipped to everybody else's.
+        ok("the wheel ships no tasks",
+           not [n for n in names if "/_tasks/" in n or n.endswith(".ds")],
+           ", ".join(n for n in names if n.endswith(".ds"))[:80])
 
         # The editor.
         ok("the wheel ships the editor", "dsviz/_web/index.html" in names)
@@ -137,43 +139,42 @@ with tempfile.TemporaryDirectory() as tmp:
             print("SKIP could not install the wheel (no network?):",
                   pip.stderr.strip()[-200:])
         else:
+            # An installed dsviz has no tasks, so the probe brings an
+            # exercise with it — which is the point of the split: the wheel
+            # is the language, and the tasks come from wherever they live.
+            exercise = tmp / "exercise"
+            shutil.copytree(fixture.EXERCISE, exercise)
+
             probe = '''
-import json, sys
-from dsviz import assets
+import json, pathlib, sys
+from dsviz import assets, exercise
 from dsviz.assignment import ASSIGNMENTS, judge_assignment
-# Installed, there is no repository to fall back to: these must be the copies
-# that ride inside the package.
-assert assets.tasks_dir().name == "_tasks", assets.tasks_dir()
+
+# Installed, there is no repository to fall back to: the editor must be the
+# copy that rides inside the package.
 assert assets.web_dir().name == "_web", assets.web_dir()
-code = ASSIGNMENTS["a1-wordcount"].starter + """
-def tokenize(key: string, value: string) -> void:
-    for word: string in split(lower(value)):
-        emit(word, 1)
 
-def total(key: string, values: [int]) -> int:
-    return sum(values)
+# And nothing else does: an installed dsviz starts with no tasks at all.
+assert not ASSIGNMENTS, sorted(ASSIGNMENTS)
 
-def byKey(key: string, n: int) -> int:
-    return hash(key) mod n
-
-job = MapReduce(map=tokenize, reduce=total, partition=byKey)
-world.run(job)
-"""
-print(json.dumps(json.loads(judge_assignment("a1-wordcount", code))["verdict"]))
+exercise.load(pathlib.Path(sys.argv[1]))
+code = ASSIGNMENTS["fx-takings"].starter + sys.argv[2]
+print(json.dumps(json.loads(judge_assignment("fx-takings", code))["verdict"]))
 '''
             # Run from anywhere but the checkout. The current directory is
             # on `sys.path`, so running this here would import the source tree
             # and prove nothing about what was installed.
-            r = subprocess.run([str(python), "-c", probe], cwd=tmp,
-                               capture_output=True, text=True)
+            r = subprocess.run(
+                [str(python), "-c", probe, str(exercise), fixture.FUNCS + fixture.WIRING],
+                cwd=tmp, capture_output=True, text=True)
             ok("an installed dsviz runs and grades a submission",
                r.returncode == 0 and '"AC"' in r.stdout,
                (r.stderr.strip()[-300:] or r.stdout.strip()[-120:]))
 
             cli = subprocess.run([str(venv / bindir / "dsviz"), "tasks"],
-                                 cwd=tmp, capture_output=True, text=True)
+                                 cwd=str(exercise), capture_output=True, text=True)
             ok("the `dsviz` command is installed",
-               cli.returncode == 0 and "a1-wordcount" in cli.stdout,
+               cli.returncode == 0 and "fx-takings" in cli.stdout,
                cli.stderr.strip()[-200:])
 
 # --- the editor loads everything the engine needs ------------------------
@@ -244,11 +245,23 @@ with tempfile.TemporaryDirectory() as sandbox:
         source = PACKAGE / f"{name}.py"
         if source.is_file():
             (sandbox / "dsviz" / f"{name}.py").write_text(source.read_text())
+    # The page fetches the exercise's tasks.py and runs it, so the sandbox
+    # gets one too — the same three lines app.js executes.
+    (sandbox / "exercise_tasks.py").write_text(
+        (fixture.EXERCISE / "tasks.py").read_text())
+    (sandbox / "tasks").mkdir()
+    for path in (fixture.EXERCISE / "tasks").iterdir():
+        (sandbox / "tasks" / path.name).write_text(path.read_text())
     probe = (
         "from dsviz.langserver import analyse, analyse_project, completions, "
         "hover, reference\n"
         "from dsviz.assignment import catalogue, judge_assignment, ASSIGNMENTS\n"
-        "assert ASSIGNMENTS, 'no tasks'\n"
+        "import exercise_tasks\n"
+        "from dsviz.assignment import register\n"
+        "register(exercise_tasks.TASKS, getattr(exercise_tasks, 'GOALS', {}),\n"
+        "         tasks_dir='tasks')\n"
+        "assert ASSIGNMENTS, 'the exercise registered no tasks'\n"
+        "assert all(a.starter.strip() for a in ASSIGNMENTS.values()), 'no starter'\n"
         "print('ok')\n")
     run = subprocess.run([sys.executable, "-c", probe], cwd=sandbox,
                          capture_output=True, text=True)

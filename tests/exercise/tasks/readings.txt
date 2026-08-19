@@ -1,0 +1,4 @@
+north 4
+south 9
+north 2
+east 7

@@ -14,6 +14,9 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from dsviz.assignment import ASSIGNMENTS                        # noqa: E402
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import fixture  # noqa: E402,F401  fills the registry
+
 from dsviz.langserver import analyse                            # noqa: E402
 
 failures = []
@@ -68,21 +71,21 @@ for name, spec in ASSIGNMENTS.items():
 # no diagnostic, and at runtime the call came back `unimplemented` with no
 # reply, so the caller bound nothing and passed nothing on. A typo produced a
 # run that looked like a run.
-t0 = ASSIGNMENTS["a1-rpc"].starter
-typo = errors(t0.replace("def balance(", "def balanc("), "a1-rpc")
+t0 = ASSIGNMENTS["fx-calls"].starter
+typo = errors(t0.replace("def stock(", "def stok("), "fx-calls")
 ok("a call to a method that does not exist is reported",
    any("does not answer" in d["message"] for d in typo),
    "; ".join(d["message"] for d in typo[:2]) or "(nothing reported)")
 ok("and it is reported at the call, not at the declaration",
-   bool(typo) and "bank.balance" in
-   t0.replace("def balance(", "def balanc(").split("\n")[typo[0]["line"] - 1],
+   bool(typo) and "depot.stock" in
+   t0.replace("def stock(", "def stok(").split("\n")[typo[0]["line"] - 1],
    f"line {typo[0]['line']}" if typo else "n/a")
 ok("and it names what the machine does answer",
-   bool(typo) and "balanc" in (typo[0].get("hint") or ""),
+   bool(typo) and "stok" in (typo[0].get("hint") or ""),
    (typo[0].get("hint") if typo else "") or "(no hint)")
 
-missing = errors(t0.replace('bank.balance("savings")',
-                            'nosuch.balance("savings")'), "a1-rpc")
+missing = errors(t0.replace('depot.stock("ladders")',
+                            'nosuch.stock("ladders")'), "fx-calls")
 ok("a call to a machine that does not exist is reported",
    any("no machine called" in d["message"] for d in missing),
    "; ".join(d["message"] for d in missing[:2]) or "(nothing reported)")
@@ -92,14 +95,14 @@ ok("a call to a machine that does not exist is reported",
 # so a class does not declare them. Checking calls inside plain functions —
 # which is what fixed the typo case — reported all four sends in the clocks
 # task as methods `Node` fails to answer.
-for name in ("a3-vector", "a3-lamport", "a3-buffering"):
+for name in ("fx-ticks",):
     got = errors(ASSIGNMENTS[name].starter, name)
     ok(f"{name}: send and broadcast are not reported as missing methods",
        not any("does not answer" in d["message"] for d in got),
        "; ".join(d["message"] for d in got[:2]))
 
 # `crash` and `restart` likewise.
-crashing = errors(t0.replace("    # bank.crash()", "    bank.crash()"), "a1-rpc")
+crashing = errors(t0.replace("    # depot.crash()", "    depot.crash()"), "fx-calls")
 ok("crash and restart are not reported as missing methods",
    not any("does not answer" in d["message"] for d in crashing),
    "; ".join(d["message"] for d in crashing[:2]))
@@ -107,7 +110,7 @@ ok("crash and restart are not reported as missing methods",
 # --- the page gets a diagram when the program is sound ------------------
 # A clean program with nothing to draw is a blank right-hand panel, which
 # reads as a broken page rather than as a program that did nothing.
-for name in ("a1-rpc", "a3-vector", "a2-wordcount"):
+for name in ("fx-calls", "fx-ticks", "fx-stages"):
     payload = json.loads(analyse(ASSIGNMENTS[name].starter, name))
     ok(f"{name} produces a diagram", bool(payload.get("frame")),
        "no frame" if not payload.get("frame") else "")

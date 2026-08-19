@@ -6,38 +6,29 @@ Students write map, reduce and partition. They do *not* write their own tests �
 may be hidden. A student who writes their own passing criteria has not been
 assessed.
 
-An assignment is data, so it can live in a file next to the exercise, be
-served to the browser, and be reused by the grader without duplication.
+**No task lives here.** This module is the shape of a task and the machinery
+for judging one; which tasks exist is the exercise's business, declared in its
+own `tasks.py` and loaded by `register`. dsviz shipped a particular course's
+fourteen tasks for a while, which meant that course could not renumber a task
+without a commit to the language, and nobody else could use the language
+without inheriting its assignments.
 """
 
 from __future__ import annotations
 
 import json
+import pathlib
 from dataclasses import dataclass, field
-
-from . import assets
 
 from .contest import CaseResult, Submission, Verdict
 from .metrics import measure
 from .notation_mr import BUDGET_METRICS
 
 
-# Resolved rather than hard-coded: installed from git the tasks ride inside
-# the package, in this checkout they sit beside it. See `assets`.
-TASKS = assets.tasks_dir()
-
-
-def starter_for(name: str) -> str:
-    """
-    The code a task opens with, read from `tasks/<name>.ds`.
-
-    Program text belongs in a program file. Holding it as a Python string meant
-    the language's own syntax was quoted inside another language, where nothing
-    checked it: the parser never saw it, the editor never opened it, and it
-    could drift out of the syntax it was supposed to teach.
-    """
-    path = TASKS / f"{name}.ds"
-    return path.read_text() if path.exists() else ""
+# The data files an exercise's tasks read — `textFile("climate.csv")` and the
+# like. Set by `register`; None until an exercise has been loaded. Starters are
+# not here: they are Python strings on the task itself, see `Assignment`.
+TASKS: "pathlib.Path | None" = None
 
 
 @dataclass
@@ -134,15 +125,16 @@ class Assignment:
     # task1.ds plus whatever it names here. A file becomes visible to another
     # by being named in a `use`.
     extra_files: dict = field(default_factory=dict)
+    #: What the editor opens with. A string, not a path to one: a `.ds` file
+    #: sitting in the checkout is a file a student can edit, and then the
+    #: scaffold and the work are the same object and the editor is optional.
+    #: The way in is the editor, and the way out is a hand-in it stamped.
+    starter: str = ""
     expects: list = field(default_factory=list)
     holdout_expects: list = field(default_factory=list)
     budgets: list = field(default_factory=list)
     requires: list = field(default_factory=list)
 
-    @property
-    def starter(self) -> str:
-        """What the editor opens with, read from this task's own .ds file."""
-        return starter_for(self.name)
 
     def program(self, student_source: str, *, holdout: bool = False) -> str:
         """The full program: the task's input plus the student's code."""
@@ -378,383 +370,63 @@ def _check_requirement(req: "Requirement", cluster) -> tuple[bool, str]:
 
 # level: the Krathwohl tier the verb belongs to, so a task can be checked for
 # spread rather than sitting entirely at "understand".
-GOALS = {
-    "causality": {
-        "level": "analyse",
-        "text": "Students will distinguish events that are ordered from those "
-                "that are concurrent, using only the messages between them, and "
-                "explain why wall-clock time cannot settle it.",
-    },
-    "rpc": {
-        "level": "understand",
-        "text": "Students will explain what a remote procedure call is and "
-                "when it is useful, distinguishing it from a local call in "
-                "terms of what can fail.",
-    },
-    "failure": {
-        "level": "analyse",
-        "text": "Students will distinguish an unresponsive service from a "
-                "failed one, and justify a caller's choice of deadline and "
-                "retry in terms of the guarantees each provides.",
-    },
-    "mapreduce": {
-        "level": "understand",
-        "text": "Students will describe how MapReduce processes a job, "
-                "identifying which stages the programmer writes and which the "
-                "framework provides.",
-    },
-    "independence": {
-        "level": "analyse",
-        "text": "Students will examine why a deterministic partitioner is "
-                "required for reducers to run independently, and distinguish "
-                "the failures that follow from its absence.",
-    },
-    "locality": {
-        "level": "understand",
-        "text": "Students will explain data locality and its effect on "
-                "efficiency, identifying the shuffle as the point at which it "
-                "can no longer be preserved.",
-    },
-    "cost": {
-        "level": "evaluate",
-        "text": "Students will evaluate competing implementations that produce "
-                "identical output, judging them on network traffic, load "
-                "balance and tail latency.",
-    },
-    "latency": {
-        "level": "evaluate",
-        "text": "Students will appraise MapReduce's suitability for iterative "
-                "workloads, supporting their judgement with the cost of "
-                "barriers and of writing intermediate results to disk.",
-    },
-    "implement": {
-        "level": "apply",
-        "text": "Students will construct working map, reduce and partition "
-                "functions in a typed notation, demonstrated by passing tests "
-                "on input they have not seen.",
-    },
-    "combiner": {
-        "level": "create",
-        "text": "Students will design a combiner that reduces network traffic "
-                "without altering the result, and defend why the operation it "
-                "performs must be associative and commutative.",
-    },
-}
+# --- the registry -------------------------------------------------------
+# Empty until an exercise is loaded. Callers hold on to this dict rather than
+# rebinding it, so filling it in place is what keeps `from .assignment import
+# ASSIGNMENTS` working from anywhere.
+
+GOALS: dict = {}
+ASSIGNMENTS: dict = {}
 
 
-# --- the course's tasks -------------------------------------------------
-# Starters are scaffolds: the signature and the shape are given, the logic is
-# the student's to write. Reference solutions are never in this file: it is
-# served to the browser, so anything here is visible to students.
+def register(tasks, goals: dict | None = None, *, tasks_dir=None) -> dict:
+    """
+    Declare which tasks exist. Replaces whatever was registered before.
 
-WORLD_BASICS = Assignment(
-    name="a1-world",
-    title="Machines, a world, and a job",
-    goals=["rpc"],
-    brief="Before any of it is distributed, you have to be able to say what "
-          "exists. A kind of machine, the machines that exist, the world they "
-          "exist in, and a piece of work run in it — this is all four, once.",
-    steps=[
-        "Run it as given. Two machines, one call, and a diagram of both.",
-        "Add a third machine, and put it in the world. A machine you make "
-        "but leave out of the world is not in the picture — try that too.",
-        "Make the machine being called slower, and watch the call take "
-        "longer.",
-        "Add a second call, so the other machine has something to do.",
-    ],
-    dialect="rpc",
-)
-
-RPC_BASICS = Assignment(
-    name="a1-rpc",
-    title="Calls over a network",
-    goals=["rpc", "failure"],
-    brief="Before anything is distributed, one machine has to ask another for "
-          "something. Find out what that costs, and what happens when it fails.",
-    steps=[
-        "Run it as given, and watch the caller wait for each answer.",
-        "Give the slow call less time than it needs.",
-        "Take the bank down, then retry into it. A machine that is down is "
-        "still down when the retry arrives, which is the point.",
-        "Bring it back yourself, and ask it again.",
-        "Undo 3 and 4, and make the bank unreliable instead. Which calls fail "
-        "now differs from one run to the next.",
-        "Tell the bank to come back on its own. Same error rate, same retries, "
-        "and a very different job — a retry only helps a machine that recovers.",
-    ],
-    dialect="rpc",
-)
-
-WORD_COUNT = Assignment(
-    name="a1-wordcount",
-    title="Word count",
-    goals=["mapreduce", "implement", "independence", "cost"],
-    brief="Count how often each word appears, ignoring case.",
-    steps=[
-        "Write the mapper: it is given a document and emits one pair per "
-        "word.",
-        "Write the reducer: it is given a word and all its counts, and "
-        "produces the total.",
-        "Write the partitioner: every occurrence of a key must reach the "
-        "same reducer.",
-        "Pass the three to a job, and run it until the visible tests pass. "
-        "Handing in re-runs your code on input you have not seen.",
-    ],
-    setup='mappers 3\nreducers 2\n'
-          'split doc1: "The cat sat on the mat"\n'
-          'split doc2: "the dog ran"\n'
-          'split doc3: "The CAT ran"',
-    holdout='mappers 3\nreducers 2\n'
-            'split doc1: "birds SING and birds fly"\n'
-            'split doc2: "the Fish swims"\n'
-            'split doc3: "birds fly SOUTH"',
-    expects=[Expectation("the", 4), Expectation("cat", 2),
-             Expectation("ran", 2), Expectation("mat", 1)],
-    holdout_expects=[Expectation("birds", 3), Expectation("fly", 2),
-                     Expectation("sing", 1), Expectation("swims", 1)],
-    requires=[Requirement(
-        "every reducer gets work", "all_reducers_used",
-        why="that is what partition is for")],
-    budgets=[BudgetLimit("network", "<", 40,
-                         why="every pair you emit crosses the network")],
-)
-
-SEARCH_INDEX = Assignment(
-    name="a1-index",
-    title="A search index",
-    goals=["mapreduce", "implement", "independence", "cost", "locality"],
-    brief="For every word, the documents it appears in. A search engine "
-          "answers from a table like this one rather than by reading the "
-          "documents again.",
-    steps=[
-        "Write the mapper: it is given one document, and what it emits has "
-        "to say which document a word came from.",
-        "Write the reducer: it is given one word and everything emitted for "
-        "it, and produces that word's list of documents.",
-        "Make the list alphabetical, so the answer does not depend on which "
-        "mapper finished first.",
-        "Meet the network budget. It is below the number of words in the "
-        "input, so the thinning has to happen before the shuffle rather "
-        "than after it.",
-    ],
-    setup='mappers 3\nreducers 2\n'
-          'split notes: "the cat sat on the mat the cat"\n'
-          'split diary: "the dog ran the dog"\n'
-          'split manual: "the cat ran the cat ran"',
-    holdout='mappers 3\nreducers 2\n'
-            'split ledger: "red red blue red green red red blue"\n'
-            'split poster: "blue GREEN blue green blue"\n'
-            'split label: "red BLUE red red"',
-    expects=[Expectation("the", "diary manual notes"),
-             Expectation("cat", "manual notes"),
-             Expectation("ran", "diary manual"),
-             Expectation("dog", "diary")],
-    holdout_expects=[Expectation("blue", "label ledger poster"),
-                     Expectation("red", "label ledger"),
-                     Expectation("green", "ledger poster")],
-    requires=[Requirement(
-        "every reducer gets work", "all_reducers_used",
-        why="that is what partition is for")],
-    # 19 pairs if every occurrence is emitted, 11 if each document sends a
-    # word once. The budget sits between, so it can only be met by emitting
-    # a word once per document — and the same is true of the held-out input,
-    # where the two numbers are 17 and 7.
-    budgets=[BudgetLimit("network", "<=", 14,
-                         why="emitting every occurrence costs 19")],
-)
+    `tasks` is a list of `Assignment`, in the order the exercise wants them
+    shown; `goals` is that exercise's learning objectives, keyed the way its
+    tasks name them. Both come from the exercise, because both are the
+    exercise's to decide.
+    """
+    global TASKS
+    ASSIGNMENTS.clear()
+    ASSIGNMENTS.update({a.name: a for a in tasks})
+    GOALS.clear()
+    GOALS.update(goals or {})
+    if tasks_dir is not None:
+        TASKS = pathlib.Path(tasks_dir)
+    return ASSIGNMENTS
 
 
-COMBINER = Assignment(
-    name="extra-combiner",
-    title="Adding a combiner",
-    goals=["locality", "combiner", "cost", "latency"],
-    brief="Same answer, far less network traffic.",
-    steps=[
-        "Bring your mapper and reducer across from the word count.",
-        "Add a combiner, which aggregates a mapper's own pairs before the "
-        "shuffle.",
-        "Check that the network metric falls while the counts stay "
-        "identical.",
-        "Work out why a combiner has to be safe to run zero, one or many "
-        "times.",
-    ],
-    setup='mappers 3\nreducers 2\n'
-          'split doc1: "the cat sat the dog the cat"\n'
-          'split doc2: "the dog ran the cat the sat"\n'
-          'split doc3: "the cat ran the sat the dog"',
-    holdout='mappers 3\nreducers 2\n'
-            'split doc1: "red red blue red green"\n'
-            'split doc2: "blue red green blue red"\n'
-            'split doc3: "green red blue red green"',
-    expects=[Expectation("the", 9), Expectation("cat", 4),
-             Expectation("dog", 3)],
-    holdout_expects=[Expectation("red", 7), Expectation("blue", 4),
-                     Expectation("green", 4)],
-    # 21 messages without a combiner, 14 with one. The budget sits between,
-    # so it can only be met by actually combining.
-    requires=[Requirement(
-        "combines before the shuffle", "combines_locally",
-        why="a combiner must reduce what crosses the network")],
-    budgets=[BudgetLimit("network", "<=", 15,
-                         why="without a combiner this is 21")],
-)
+def load_exercise(root) -> dict:
+    """
+    Load an exercise's own tasks, from `tasks.py` in its checkout.
 
+    The file defines `TASKS` — a list of `Assignment` — and optionally
+    `GOALS`. It is ordinary Python because a task's criteria are ordinary
+    values, and because the exercise author is already writing Python to
+    describe a program that runs in this language.
 
-SPARK_MEMORY = Assignment(
-    name="a2-wordcount",
-    title="Word count, kept in memory",
-    goals=["locality", "cost"],
-    brief="MapReduce writes to disk between stages. Spark keeps the data "
-          "and remembers how it was made, so a lost partition is recomputed "
-          "rather than reloaded.",
-    steps=[
-        "Run it and watch the stages run across the executors.",
-        "Lose a step, and watch the lineage rebuild it instead of reloading "
-        "it.",
-        "Lose an earlier step, and see how much more has to be rebuilt.",
-        "Make one executor slow, and find the straggler on the timeline.",
-    ],
-    dialect="spark",
-)
+    Returns the registry. A checkout with no `tasks.py` has no tasks, and
+    ends up with an empty registry rather than an inherited one — leaving
+    whatever was loaded last in place would mean opening a directory with no
+    manifest and being offered somebody else's tasks. The editor reports an
+    empty dropdown; nothing raises.
+    """
+    import importlib.util
 
-CLOCKS = Assignment(
-    name="a3-vector",
-    title="What happened before what",
-    goals=["causality"],
-    brief="With no shared clock, the only order anyone can know is the one "
-          "messages create. Everything else is concurrent.",
-    steps=[
-        "Run it and read the diagram: time runs down, messages run across.",
-        "Add a message and watch which events become ordered by it.",
-        "Find two events that are concurrent, where neither can see the other.",
-        "Make a process slow, and confirm order is not about wall time.",
-    ],
-    dialect="rpc",
-)
+    root = pathlib.Path(root)
+    manifest = root / "tasks.py"
+    if not manifest.exists():
+        return register([], {})
 
-MR_OVER_RPC = Assignment(
-    name="a1-servers",
-    title="Map and reduce on separate servers",
-    goals=["rpc", "failure", "mapreduce", "locality"],
-    brief="Task 1 was already distributed across five machines, and never "
-          "made you write a deadline, a retry or a crash. Here the framework "
-          "is gone: the client asks a map server and a reduce server by hand, "
-          "and every failure it was hiding is now a line you have to write.",
-    steps=[
-        "Run it as given, and count what you had to say out loud that Task 1 "
-        "never asked you for. The client cannot reduce what it has not been "
-        "given, so it waits.",
-        "Give the map call a deadline shorter than the work takes.",
-        "Take the map server down before the first call, then retry into it. "
-        "A machine that is down is still down when the retry arrives.",
-        "Bring it back yourself, and map the second chunk.",
-        "Undo 3 and 4, and make the server unreliable instead. Which calls "
-        "fail now differs from one run to the next.",
-        "Let it recover on its own, and ask why the retry is worth something "
-        "now when it was worth nothing in step 3.",
-    ],
-    dialect="rpc",
-)
-
-TELEMETRY = Assignment(
-    name="a2-telemetry",
-    title="Finding the shuffle",
-    goals=["locality", "cost"],
-    brief="Readings arrive one row per sensor; the question is per room. "
-          "Somewhere in between, every reading for a room has to reach the "
-          "same machine, and that move is the expensive part.",
-    steps=[
-        "Run it and say, from the diagram, which line caused the barrier.",
-        "Move the filter earlier and see whether the shuffle gets cheaper.",
-        "Lose the grouped step, then lose the one before it, and compare "
-        "what has to be rebuilt.",
-        "Make one executor slow, and find the straggler on the timeline.",
-    ],
-    dialect="spark",
-)
-
-KMEANS = Assignment(
-    name="a2-kmeans",
-    title="The same points, round after round",
-    goals=["latency", "cost", "locality"],
-    brief="k-means repeats one pass until it settles. Assigning points needs "
-          "no coordination; recomputing the centroids needs all of them. "
-          "Keeping the points in memory is what makes the repetition cheap.",
-    steps=[
-        "Run it and count the stages. Say which had to wait for every machine "
-        "and which did not.",
-        "Take the cache away, and say what a third round would now cost.",
-        "Lose the cached points, and note that the lineage rebuilt them rather "
-        "than reading them off disk.",
-        "Add a third round by copying the two lines of round two. The pipeline "
-        "grows by one stage per round, which is the shape of the problem.",
-        "Make an executor unreliable and run it a few times. Compare what a "
-        "lost partition costs against a lost mapper in Task 1.",
-    ],
-    dialect="spark",
-)
-
-LAMPORT = Assignment(
-    name="a3-lamport",
-    title="One number per process",
-    goals=["causality"],
-    brief="A Lamport timestamp guarantees that if a happened before b then "
-          "L(a) < L(b). It does not guarantee the converse, and seeing where "
-          "that breaks is the point of the task.",
-    steps=[
-        "Run it and read the counters off the diagram.",
-        "Add a message from a process that has not heard from the others, "
-        "and compare its number with one it cannot know about.",
-        "Find two events whose numbers cannot order them.",
-        "Make a process slow, and confirm the counters do not move.",
-    ],
-    dialect="rpc",
-)
-
-BUFFERING = Assignment(
-    name="a3-buffering",
-    title="Delivering messages in order",
-    goals=["causality"],
-    brief="A vector clock says which messages depend on which. It does not "
-          "stop one being shown before the message it answers — that takes a "
-          "delivery rule, and holding what the rule refuses.",
-    steps=[
-        "Run it with the rule off, and read the line where a reply is shown "
-        "before the message it answers.",
-        "Switch the rule on. Note which message is held, and what released "
-        "it.",
-        "Make a process slow, and confirm the delivery order does not move.",
-        "Add a message, choose who is late, and predict what is held before "
-        "you run it.",
-    ],
-    dialect="rpc",
-)
-
-INTERFACES = Assignment(
-    name="a1-talking",
-    title="How machines talk: RPC, REST and messaging",
-    goals=["rpc"],
-    brief="One question, asked three ways. Two of the three look the same on "
-          "the diagram and are the same in what they cost the caller; the "
-          "third does not wait for anybody.",
-    steps=[
-        "Run it as given, and find the three interactions on the timeline.",
-        "Compare the RPC call and the REST call. The contract is a signature "
-        "in one and an address in the other — say which of those two "
-        "differences the diagram can see.",
-        "Give the queue a reader, so the message that was sent to nobody "
-        "finally reaches something.",
-        "Make the bank slow. Two of the three interactions get slower with "
-        "it, and one does not.",
-    ],
-    dialect="rpc",
-)
-
-ASSIGNMENTS = {a.name: a for a in (
-    WORLD_BASICS, WORD_COUNT, SEARCH_INDEX, INTERFACES, RPC_BASICS,
-    MR_OVER_RPC, COMBINER,
-    SPARK_MEMORY, TELEMETRY, KMEANS,
-    LAMPORT, CLOCKS, BUFFERING)}
+    spec = importlib.util.spec_from_file_location("dsviz_exercise_tasks",
+                                                  manifest)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return register(getattr(module, "TASKS", []),
+                    getattr(module, "GOALS", {}),
+                    tasks_dir=root / "tasks")
 
 
 def load_holdout(path: str | None = None) -> bool:

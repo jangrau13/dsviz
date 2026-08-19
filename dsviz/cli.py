@@ -19,6 +19,7 @@ copy and so nothing to fall behind.
 from __future__ import annotations
 
 import argparse
+import errno
 import html
 import json
 import os
@@ -166,6 +167,14 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/workspace":
             self._json(200, {"files": load_workspace(self.root)})
             return
+        if self.path == "/api/exercise":
+            # So that a server starting up can say who already has the port,
+            # rather than reporting a number the student then has to hunt for.
+            self._json(200, {"dsviz": True,
+                             "title": exercise.title(self.root),
+                             "root": str(self.root),
+                             "tasks": exercise.task_names(self.root)})
+            return
         if self.path in ("/", "/index.html"):
             self._send_page()
             return
@@ -299,10 +308,72 @@ class Handler(SimpleHTTPRequestHandler):
             super().log_message(fmt, *args)
 
 
+# How far to look for a free port before giving up. Far enough to step over a
+# few forgotten servers, short enough that a machine with nothing free says so
+# rather than scanning for a minute.
+PORT_SEARCH = 20
+
+
+def whoever_has(port: int) -> str:
+    """
+    Who is already on this port, said in terms the student can act on.
+
+    A port number alone leaves them hunting through `lsof`. Another dsviz
+    server can be asked directly — it will name its own exercise — and
+    anything else at least gets identified as not being one of ours.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/exercise", timeout=0.5) as reply:
+            info = _json.loads(reply.read().decode())
+    except (urllib.error.URLError, OSError, ValueError):
+        return "something that is not a dsviz editor"
+    if not isinstance(info, dict) or not info.get("dsviz"):
+        return "something that is not a dsviz editor"
+    name = info.get("title") or pathlib.Path(info.get("root", "")).name
+    return f"the editor for {name}" if name else "another dsviz editor"
+
+
+def open_server(port: int, handler) -> tuple:
+    """
+    Bind the first free port at or after `port`.
+
+    A port left busy by a server someone forgot to stop is the most ordinary
+    thing that happens here, and it used to end in a traceback about
+    `socket.bind` — which says nothing about what to do. The next port along
+    works just as well, so it is taken and said out loud.
+    """
+    last = None
+    for candidate in range(port, port + PORT_SEARCH + 1):
+        try:
+            return ThreadingHTTPServer(("0.0.0.0", candidate), handler), candidate
+        except OSError as err:
+            if err.errno not in (errno.EADDRINUSE, errno.EACCES):
+                raise
+            last = err
+    raise OSError(
+        f"nothing free between {port} and {port + PORT_SEARCH}: {last}")
+
+
 def serve(port: int) -> int:
     root = project_root()
     handler = type("BoundHandler", (Handler,), {"root": root})
-    server = ThreadingHTTPServer(("0.0.0.0", port), handler)
+    asked = port
+    try:
+        server, port = open_server(port, handler)
+    except OSError as err:
+        print(f"Could not start the editor: {err}")
+        print(f"Port {asked} is serving {whoever_has(asked)}, and the ports "
+              f"after it are busy too. Stop one, or pick a port yourself: "
+              f"dsviz serve 9000")
+        return 1
+    if port != asked:
+        print(f"Port {asked} is already serving {whoever_has(asked)}, "
+              f"so this one is on {port} instead.")
     print(f"Editor on http://localhost:{port}")
     print(f"  exercise:  {root}")
     print(f"  workspace: .dsviz/workspace.json  "

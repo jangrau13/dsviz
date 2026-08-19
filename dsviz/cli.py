@@ -368,6 +368,9 @@ def grade() -> int:
             failed.append(path.name)
             continue
         graded += 1
+        # The exercise's heading, not the package's: a student reading "Task 1"
+        # in a CI log for what their exercise calls Task 2 has to translate.
+        heading = exercise.title_for(root, task, spec.title)
         text = path.read_text()
 
         # Was this actually run, or did it appear here? `result/` is written
@@ -377,16 +380,16 @@ def grade() -> int:
         if not os.environ.get("DSVIZ_NO_ATTEST"):
             reasons = attest.verify(task, text)
             if reasons:
-                print(f"FAIL {spec.title} — this is not a hand-in")
+                print(f"FAIL {heading} — this is not a hand-in")
                 for reason in reasons:
                     print(f"       · {reason}")
-                failed.append(spec.title)
+                failed.append(heading)
                 continue
 
         source, _ = attest.split(text)
         result = json.loads(judge_assignment(task, source, True))
         ok = result["verdict"] == "AC"
-        print(f"{'ok' if ok else 'FAIL':<4} {spec.title} — {result['label']} "
+        print(f"{'ok' if ok else 'FAIL':<4} {heading} — {result['label']} "
               f"({result['score']:g}/{result['max_score']:g})")
         for case in result["cases"]:
             if case["verdict"] != "AC":
@@ -395,7 +398,7 @@ def grade() -> int:
                 print(f"       · {case['name']}"
                       + (f" — {case['message']}" if case["message"] else ""))
         if not ok:
-            failed.append(spec.title)
+            failed.append(heading)
 
     basis = "held-out input" if on_holdout else "the visible criteria only"
     if failed:

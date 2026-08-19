@@ -89,7 +89,12 @@ def build_cluster(dialect: str, source: str, *, seed: int | None = None):
     `seed` fixes the failure draws in every dialect, which is what lets the
     same program be run a hundred times and one of those runs be pulled back.
     """
-    if dialect == "rpc":
+    # "clocks" is a program of `@process` machines, which the same runtime
+    # runs — the dialect names the exercise, not a separate builder. Leaving it
+    # out meant it fell through to MapReduce, so every clocks task failed to
+    # hand in with "no input splits declared": `detect_dialect` says "clocks",
+    # nothing here claimed it, and the default claimed everything.
+    if dialect in ("rpc", "clocks"):
         from .runtime import build
         return build(source, seed=seed)
     if dialect == "spark":

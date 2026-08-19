@@ -44,6 +44,21 @@ from dsviz.assignment import ASSIGNMENTS                        # noqa: E402
 missing = [n for n, a in ASSIGNMENTS.items() if not a.starter.strip()]
 ok("every task has a starter", not missing, ", ".join(missing))
 
+# Every task must survive the hand-in, which runs it under the dialect the
+# detector picks rather than the one the assignment declares. Those two
+# disagreed for `@process` programs, and the result was that no clocks task
+# could be handed in at all — a break invisible to every test that only ran
+# starters directly.
+from dsviz import attest                                        # noqa: E402
+
+unstampable = []
+for name in ASSIGNMENTS:
+    try:
+        attest.stamp(name, ASSIGNMENTS[name].starter)
+    except Exception as err:                                    # noqa: BLE001
+        unstampable.append(f"{name}: {str(err).splitlines()[0]}")
+ok("every task can be handed in", not unstampable, "; ".join(unstampable))
+
 
 # --- the built wheel ----------------------------------------------------
 # `uv build` is what a student's `uv add` ultimately consumes. If it is not

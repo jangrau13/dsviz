@@ -131,6 +131,7 @@ SAFE_FUNCS: dict[str, Any] = {
     "abs": abs, "round": round, "sum": sum, "min": min, "max": max,
     "sorted": sorted, "list": list, "tuple": tuple, "set": set,
     "any": any, "all": all, "zip": lambda *xs: list(zip(*xs)),
+    "dict": dict,
     "range": lambda *a: list(range(*a)),
     "enumerate": lambda xs, start=0: list(enumerate(xs, start)),
 }
@@ -848,10 +849,15 @@ def resolve_input(name, inputs: dict, line: int) -> list:
         if candidate in inputs:
             value = inputs[candidate]
             return list(value) if isinstance(value, list) else str(value).splitlines()
-    from . import assets
-    path = assets.tasks_dir() / key
-    if path.exists():
-        return [ln for ln in path.read_text().splitlines() if ln.strip()]
+    # Data files belong to the exercise, not to dsviz: the package ships no
+    # tasks, so where they live is whatever exercise was loaded. `TASKS` is
+    # None until one has been, which is an ordinary state — free play declares
+    # its own input rather than reading a file.
+    from . import assignment
+    if assignment.TASKS is not None:
+        path = assignment.TASKS / key
+        if path.exists():
+            return [ln for ln in path.read_text().splitlines() if ln.strip()]
     raise NotationError([Diagnostic(
         line, 1, "error", f"there is no input called {key!r}",
         hint="declare it, e.g. 'input rows: \"…\"', or name a file the task "
@@ -894,6 +900,22 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None) -> Pipeline
     pipe = Pipeline(context="sc")
     known: dict = {}
 
+    def collected() -> dict:
+        """Earlier results, as the driver would hold them.
+
+        A function handed to a transformation can name an RDD built earlier,
+        and gets the records that RDD holds. That is what a real driver does
+        between rounds of an iterative job: it collects the last result and
+        closes over it, so the loop is sequential on one machine while each
+        pass over the data stays parallel.
+
+        Without it there was no way to feed a round's output into the next
+        one, and the only way to write k-means was to run it once and paste
+        the centroids back in as literals — code fitted to the data it was
+        developed on, which is exactly what the held-out run exists to catch.
+        """
+        return {name: list(step.data) for name, step in known.items()}
+
     for rdd in rdds:
         steps = rdd.steps or [(rdd.op, [])]
         if rdd.parents:
@@ -915,7 +937,8 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None) -> Pipeline
                         rdd.line, 1, "error",
                         f"a pipeline starts by reading something, not with {op!r}",
                         hint="start with textFile(\"…\") or parallelize([…])")])
-                values, _ = (parse_arguments(args[0], rdd.line, budget)
+                values, _ = (parse_arguments(args[0], rdd.line, budget,
+                                             collected())
                              if args else ([], {}))
                 if op == "parallelize":
                     data = list(values[0]) if values else []
@@ -949,7 +972,8 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None) -> Pipeline
                 if named is not None:
                     values, options = [named.data], {}
                 else:
-                    values, options = parse_arguments(blob, rdd.line, budget) \
+                    values, options = parse_arguments(
+                        blob, rdd.line, budget, collected()) \
                         if blob.strip() else ([], {})
                 values = list(values) + list(options.values())
                 data = _apply(op, values, parent.data,
@@ -1302,7 +1326,8 @@ def mask_arguments(source: str) -> tuple[str, dict]:
     return "".join(out), spans
 
 
-def parse_arguments(text: str, line: int, budget: Budget) -> tuple:
+def parse_arguments(text: str, line: int, budget: Budget,
+                    env: dict | None = None) -> tuple:
     """
     One hidden argument list, as the values it denotes.
 
@@ -1320,7 +1345,8 @@ def parse_arguments(text: str, line: int, budget: Budget) -> tuple:
             hint="the functions a transformation takes are real PySpark "
                  "lambdas, so Python's own rules apply")])
     call = tree.body
-    args = [evaluate(a, {}, line, budget) for a in call.args]
-    options = {kw.arg: evaluate(kw.value, {}, line, budget)
+    scope = env or {}
+    args = [evaluate(a, scope, line, budget) for a in call.args]
+    options = {kw.arg: evaluate(kw.value, scope, line, budget)
                for kw in call.keywords if kw.arg}
     return args, options

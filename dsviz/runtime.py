@@ -52,17 +52,28 @@ def machines_of(mod) -> list:
     Nothing runs because a class was declared — `server = Adder()` is what puts
     a machine on the timeline, under the name `server`.
     """
-    # Only what the world contains, narrowed to whatever subsystem a run was
-    # given. A machine that exists but was left out of the world is a
-    # description of a machine, not a running one.
+    # Only what the world contains, narrowed to the subsystems the runs
+    # actually ask for. A machine that exists but was left out of the world is
+    # a description of a machine, not a running one.
+    #
+    # Every run is consulted, not just the first. Narrowing to `mod.runs[0].on`
+    # meant a program that ran one job on some machines and a second job on
+    # others never created the second set at all — so the second `world.run`
+    # found no executors and did nothing, silently. Which machines a job is
+    # given is decided per run, in the runner; this only decides which ones are
+    # built, and that is the union of everything asked for.
     chosen: list = []
     for world in mod.worlds.values():
         chosen = list(world.machines)
         break
+    asked: set = set()
     for run in mod.runs:
-        if run.on:
-            chosen = [m for m in chosen if m in run.on]
-        break
+        if not run.on:
+            asked = set(chosen)       # a run with no `on` wants the whole world
+            break
+        asked |= set(run.on)
+    if asked:
+        chosen = [m for m in chosen if m in asked]
 
     out = []
     for name in chosen:

@@ -448,7 +448,7 @@ class CausalClocks(Clocks):
     message that arrives before something it depends on — that is a separate
     rule, and here the student writes it:
 
-        job = Calls(run=story, delivery="causal")
+        job = Calls(run=deliveries, delivery="causal")
 
     The rule is the standard one. A message from p_j carrying stamp V is
     delivered at p_i only when

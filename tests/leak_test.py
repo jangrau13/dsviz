@@ -81,19 +81,36 @@ for pattern, what in ANSWERS:
 
 # The reference solutions, when the sibling repository is checked out: no
 # substantial line of one may appear anywhere a student can read.
+#
+# Only what a solution *adds* counts. A reference solution is the task's own
+# starter with the answer written into it, and the starter ships to every
+# student — so lines like `world.run(job)` are in both, and comparing whole
+# files flags the language's own syntax as a leaked answer. A starter's
+# commented-out guidance is public too: `#   world.run(job)` is shown to
+# everyone, so the uncommented form is not a secret either.
 sol = HERE.parent / "spikey-dsl-sol" / "solutions"
 if sol.is_dir():
+    import sys as _sys
+    _sys.path.insert(0, str(HERE.parent))
+    from dsviz.assignment import ASSIGNMENTS
+
     lines = []
     for f in sorted(sol.glob("*.ds")):
+        spec = ASSIGNMENTS.get(f.stem)
+        public = set()
+        for ln in (spec.starter if spec else "").splitlines():
+            ln = ln.strip()
+            public.add(ln)
+            public.add(ln.lstrip("#").strip())
         for line in f.read_text().splitlines():
             line = line.strip()
-            if len(line) >= 12 and not line.startswith("#"):
+            if len(line) >= 12 and not line.startswith("#") and line not in public:
                 lines.append((f.name, line))
     leaked = []
     for f in files:
         text = f.read_text(errors="ignore")
         leaked += [f"{f.name}: {line}" for name, line in lines if line in text]
-    ok("no line of a reference solution is shipped", not leaked,
+    ok("no line a reference solution adds is shipped", not leaked,
        " | ".join(leaked[:5]))
 else:
     print("note  spikey-dsl-sol not checked out — line-for-line check skipped")

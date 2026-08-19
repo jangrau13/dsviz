@@ -117,32 +117,50 @@ blob = "\n".join(pages.values()).lower()
 # reasoning about when it pays off, which is a task's question to ask.
 FORBIDDEN = [
     "word count", "wordcount", "t0-rpc", "t1-", "t2-", "t3-", "t4-",
+    "t5-", "t6-", "t7-", "t8-", "t9-",
     "chunk001", "task 0", "task 1", "task 2", "task 3", "task 4",
     "split(lower(",          # the mapper body, in one call
 ]
 for term in FORBIDDEN:
     ok(f"no page mentions {term!r}", term not in blob)
 
+from dsviz.assignment import ASSIGNMENTS  # noqa: E402
+
 # The reference solutions live in a sibling repository; when it is checked
 # out, no line of one may appear in the documentation.
+#
+# Only the lines a solution *adds* count. A reference solution is the task's
+# own starter with the answer written into it, and the starter ships to every
+# student — so `world.run(job)` and `def story() -> void:` appear in both the
+# solution and, legitimately, in a reference that has to document how a job is
+# run at all. Comparing whole files made those collide and turned this check
+# into noise, which is worse than not having it: the answer is exactly the
+# part the starter does not already contain.
 sol = pathlib.Path("..") / "spikey-dsl-sol" / "solutions"
 if sol.is_dir():
     leaked = []
     for f in sorted(sol.glob("*.ds")):
+        spec = ASSIGNMENTS.get(f.stem)
+        # A starter's commented-out guidance is public too: `#   world.run(job)`
+        # is shown to every student, so the uncommented form is not an answer.
+        public = set()
+        for ln in (spec.starter if spec else "").splitlines():
+            ln = ln.strip()
+            public.add(ln)
+            public.add(ln.lstrip("#").strip())
         for line in f.read_text().splitlines():
             line = line.strip()
-            if len(line) < 12 or line.startswith("#"):
+            if len(line) < 12 or line.startswith("#") or line in public:
                 continue
             if line.lower() in blob:
                 leaked.append(f"{f.name}: {line}")
-    ok("no line of a reference solution appears in the docs", not leaked,
+    ok("no line a solution adds appears in the docs", not leaked,
        " | ".join(leaked))
 else:
     print("note  reference solutions not checked out — line check skipped")
 
 # Held-out input never travels: the docs are generated from tables that must
 # not contain it either.
-from dsviz.assignment import ASSIGNMENTS  # noqa: E402
 
 # The answers, not the cluster settings: `holdout` is lines like
 # "mappers 3", whose words are ordinary language vocabulary. What must never

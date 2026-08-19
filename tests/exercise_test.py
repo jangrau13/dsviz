@@ -106,6 +106,19 @@ tasks = ["t4-clocks"]
        round_trip["t4-clocks"].startswith('Task 2: "happened before"'),
        round_trip["t4-clocks"])
 
+    # The tabs the editor opens on must be scoped the same way the dropdown
+    # is, or the scoping is cosmetic.
+    from dsviz import cli
+
+    seeded = cli.seed(spark)
+    starters = sorted(n for n in seeded if n.endswith(".ds"))
+    ok("the workspace opens on this exercise's tasks only",
+       starters == ["t3-spark.ds", "t6-telemetry.ds", "t7-kmeans.ds"],
+       ", ".join(starters))
+    ok("data files come regardless of which task reads them",
+       any(not n.endswith(".ds") for n in seeded),
+       ", ".join(sorted(n for n in seeded if not n.endswith(".ds"))))
+
 print("ALL EXERCISE TESTS PASSED" if not failures
       else f"{len(failures)} FAILED: {', '.join(failures)}")
 sys.exit(1 if failures else 0)

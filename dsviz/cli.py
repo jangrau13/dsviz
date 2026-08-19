@@ -87,13 +87,24 @@ def seed(root: pathlib.Path) -> dict:
             if path.is_file() and not path.name.startswith("."):
                 files[path.name] = path.read_text()
         return files
+
     tasks = assets.tasks_dir()
-    if tasks.is_dir():
-        # Every shipped file, not only the .ds ones: a task that reads
-        # chunk001.txt needs chunk001.txt to be something the student has.
-        for path in sorted(tasks.iterdir()):
-            if path.is_file() and not path.name.startswith("."):
-                files[path.name] = path.read_text()
+    if not tasks.is_dir():
+        return files
+
+    # This exercise's starters, and nothing else. The package ships every task
+    # the course has; opening the Spark exercise on a set of tabs that includes
+    # a word-count MapReduce would undo the scoping the dropdown does.
+    wanted = set(exercise.task_names(root))
+    for path in sorted(tasks.iterdir()):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        # Data files come regardless of which task reads them: a task that
+        # opens chunk001.txt needs chunk001.txt to be something the student
+        # has, and nothing records which task that is.
+        if path.suffix == ".ds" and path.stem not in wanted:
+            continue
+        files[path.name] = path.read_text()
     return files
 
 

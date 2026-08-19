@@ -172,6 +172,27 @@ found = sorted(h for h in held
                if re.search(rf"\b{re.escape(h)}\b", blob))
 ok("no held-out literal reaches the docs", not found, ", ".join(found))
 
+# The grading repository keeps the whole reference as one file, so an examiner
+# has the language to hand mid-viva. It said it was generated long before
+# anything generated it, and drifted into documenting `def map(...)` — syntax
+# the engine now refuses. It comes off the same tables as everything else.
+import importlib.util  # noqa: E402
+import tempfile  # noqa: E402
+
+spec = importlib.util.spec_from_file_location(
+    "dsviz_docs", pathlib.Path(__file__).resolve().parents[1] / "docs.py")
+docs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(docs)
+
+with tempfile.TemporaryDirectory() as tmp:
+    at = pathlib.Path(tmp) / "LANGUAGE.md"
+    docs.write_single(str(at))
+    single = at.read_text()
+absent = sorted(n for n in BUILTINS if f"`{n}`" not in single)
+ok("the one-file reference covers every builtin", not absent, ", ".join(absent))
+ok("and does not carry the syntax the engine refuses",
+   "def map(" not in single and "def reduce(" not in single)
+
 print()
 if failures:
     print(f"{len(failures)} DOCUMENTATION CHECK(S) FAILED")

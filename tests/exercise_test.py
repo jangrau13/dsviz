@@ -1,0 +1,111 @@
+"""
+An exercise gets its own tasks, under its own numbering.
+
+One installed package ships every task the course has. Three exercises each
+show a few of them, numbered from one, and none of them should present a task
+belonging to another. That scoping is the only thing standing between "three
+independent exercises" and "one dropdown with everything in it", so it is
+worth a test rather than a convention.
+"""
+
+import json
+import pathlib
+import sys
+import tempfile
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from dsviz import exercise                                      # noqa: E402
+from dsviz.assignment import ASSIGNMENTS                        # noqa: E402
+
+failures = []
+
+
+def ok(label, passed, detail=""):
+    if not passed:
+        failures.append(label)
+    print(f"{'ok  ' if passed else 'FAIL'} {label}" + (f" — {detail}" if detail else ""))
+
+
+def make(tmp: pathlib.Path, body: str) -> pathlib.Path:
+    root = pathlib.Path(tempfile.mkdtemp(dir=tmp))
+    (root / "pyproject.toml").write_text(body)
+    return root
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+
+    # No manifest at all: this repository itself, where every task is wanted.
+    bare = pathlib.Path(tempfile.mkdtemp(dir=tmp))
+    ok("no manifest offers every task",
+       exercise.task_names(bare) == list(ASSIGNMENTS))
+
+    spark = make(tmp, '''
+[project]
+name = "assignment-2"
+version = "0"
+
+[tool.dsviz]
+title = "Assignment 2"
+tasks = ["t3-spark", "t6-telemetry", "t7-kmeans"]
+
+[tool.dsviz.titles]
+"t3-spark" = "Task 1: word count in Spark"
+''')
+    ok("an exercise offers only its own tasks",
+       exercise.task_names(spark) == ["t3-spark", "t6-telemetry", "t7-kmeans"],
+       str(exercise.task_names(spark)))
+    ok("another exercise's task is not offered",
+       "t1-wordcount" not in exercise.task_names(spark))
+    ok("declared order is kept",
+       exercise.task_names(spark)[0] == "t3-spark",
+       "the dropdown reads in the order the exercise wrote")
+    ok("an exercise can renumber a task",
+       exercise.title_for(spark, "t3-spark", "x") == "Task 1: word count in Spark")
+    ok("a task it did not rename keeps the package's title",
+       exercise.title_for(spark, "t6-telemetry", ASSIGNMENTS["t6-telemetry"].title)
+       == ASSIGNMENTS["t6-telemetry"].title)
+
+    # A name the package no longer has must not take the editor down with it;
+    # it is dropped, and `dsviz tasks` is where it surfaces.
+    stale = make(tmp, '''
+[project]
+name = "assignment-x"
+version = "0"
+
+[tool.dsviz]
+tasks = ["t3-spark", "t99-does-not-exist"]
+''')
+    ok("a task that no longer exists is dropped, not raised",
+       exercise.task_names(stale) == ["t3-spark"])
+    ok("and is reported so it can be fixed",
+       exercise.unknown_tasks(stale) == ["t99-does-not-exist"])
+
+    # A broken manifest must not stop a student working.
+    broken = make(tmp, "[tool.dsviz\ntasks = [")
+    ok("an unparseable manifest falls back to every task",
+       exercise.task_names(broken) == list(ASSIGNMENTS))
+
+    # The titles reach the browser as JSON in a meta tag, so they have to
+    # survive being serialised — an em dash or a quote in a heading included.
+    quoted = make(tmp, '''
+[project]
+name = "a"
+version = "0"
+
+[tool.dsviz]
+tasks = ["t4-clocks"]
+
+[tool.dsviz.titles]
+"t4-clocks" = 'Task 2: "happened before" — and what it cannot tell you'
+''')
+    round_trip = json.loads(json.dumps(exercise.titles(quoted)))
+    ok("a heading with quotes and dashes survives the trip to the page",
+       round_trip["t4-clocks"].startswith('Task 2: "happened before"'),
+       round_trip["t4-clocks"])
+
+print("ALL EXERCISE TESTS PASSED" if not failures
+      else f"{len(failures)} FAILED: {', '.join(failures)}")
+sys.exit(1 if failures else 0)

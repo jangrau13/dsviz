@@ -3,7 +3,8 @@ name = "dsviz"
 version = "0.1.0"
 description = "One DSL for the Decentralized Systems course: MapReduce, Spark, vector clocks"
 readme = "README.md"
-requires-python = ">=3.10"
+# tomllib, for reading an exercise's [tool.dsviz] table.
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Jan Grau" }]
 keywords = ["teaching", "distributed-systems", "mapreduce", "spark", "simulation"]

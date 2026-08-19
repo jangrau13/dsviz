@@ -1,0 +1,62 @@
+# Task 1 - one number per process.
+#
+# Three processes exchange messages in a chat. No one shares a clock, so the
+# only ordering anyone can know is the one the messages create: if p1 sends to
+# p2, that send happened before p2 received it.
+#
+# A Lamport timestamp is a single counter per process. A send increments the
+# sender's counter and carries it along. A receive takes the larger of the two
+# counters and then increments. That is the whole rule.
+#
+# It buys one guarantee, and it is worth stating precisely:
+#
+#     if a happened before b, then L(a) < L(b)
+#
+# The converse is not true, and finding out why is the point of this task. A
+# smaller number does not mean a message came first. It can mean the two
+# events had nothing to do with each other and the counters simply drifted
+# apart. In Task 2 you swap this for a vector clock, which can tell those two
+# cases apart. Here you need to see what is missing before you are given it.
+#
+# Try these in order. Steps 2 and 4 are marked on the lines they belong to.
+#
+#   1. run it and read the diagram: time runs down, messages run across, and
+#      each event carries the counter its process had when it happened
+#   2. add a message from p2, which by then has not heard from p3. Compare
+#      its number with the number on p3's reply. One of them is smaller.
+#      Neither event can possibly know about the other, so ask what that
+#      smaller number is actually telling you
+#   3. find two events whose numbers you cannot use to order them. This one
+#      is a question, not an edit
+#   4. make one process slow, and confirm the counters do not change. Order
+#      here has nothing to do with wall time
+
+# --- the machines ----------------------------------------------------
+
+@process
+class Node:
+    pass
+
+p1 = Node(speed=1.0)      # step 4: make it 0.3
+p2 = Node(speed=1.0)
+p3 = Node(speed=1.0)
+
+# --- the world -------------------------------------------------------
+
+world = World(machines=[p1, p2, p3])
+
+# --- the job ---------------------------------------------------------
+
+def story() -> void:
+    p1.send(p2, "hello")
+    p2.send(p3, "onwards")
+    p3.send(p1, "reply")
+    # step 2: uncomment. p2 has not heard from p3 at this point, and p3 has
+    # not heard about this — yet both get a number, and one is smaller
+    # p2.send(p1, "and again")
+
+# `clock="lamport"` is what makes the stamps single numbers. Take it away and
+# the same chat runs under vector clocks, which is Task 2.
+job = Calls(run=story, clock="lamport")
+
+world.run(job)

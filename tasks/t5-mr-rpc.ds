@@ -1,0 +1,78 @@
+# Task 3 - the same word count, split across servers.
+#
+# In Task 2 the map and the reduce were two functions in one program. Nothing
+# was distributed: a function call is a function call. Here they are two
+# machines, and the client has to ask each of them over a network.
+#
+# That is the whole difference this task is about. The code looks almost the
+# same. What changed is that every arrow between two boxes on the diagram can
+# now be slow, arrive late, or not arrive at all — and the client has to say
+# what it wants done about that.
+#
+# Statuses follow gRPC: ok, unavailable, unimplemented, deadline_exceeded.
+#
+# Try these in order. Every line you need is written below and commented out,
+# marked with the step it belongs to.
+#
+#   1. run it as it is. Two chunks are mapped, then the results are reduced.
+#      Watch the client wait: it cannot reduce what it has not been given
+#   2. give the map call a deadline shorter than the work takes. The client
+#      gets an answer, and the answer is that there was no answer
+#   3. take the map server down before the first call, then retry into it.
+#      A machine that is down is still down when the retry arrives
+#   4. bring it back yourself, and map the second chunk
+#   5. undo 3 and 4, and make the map server unreliable instead. Which calls
+#      fail now differs from one run to the next
+#   6. let it recover on its own, and ask why the retry is worth anything
+#      now when it was worth nothing in step 3
+
+# --- the servers -----------------------------------------------------
+# One machine per stage, the way the gradle version runs one process per
+# stage. `@duration` is how long the method takes when the server is not
+# otherwise held up.
+
+@machine
+class MapServer:
+    @duration(0.6)
+    def mapChunk(chunk: string) -> string:
+        return chunk
+
+@machine
+class ReduceServer:
+    @duration(0.4)
+    def reduceChunk(pairs: string) -> string:
+        return pairs
+
+# step 5: make error_rate 0.5
+# step 6: then add   on_crash="restart", restart_after=0.5
+mapping = MapServer(speed=1.0, error_rate=0.0)
+reducing = ReduceServer(speed=1.0)
+
+# --- the world -------------------------------------------------------
+
+world = World(machines=[mapping, reducing])
+
+# --- the client ------------------------------------------------------
+# The client is not a machine you declared. It is the job: the sequence of
+# calls that makes the work happen.
+
+def story() -> void:
+    # step 3: uncomment, so the map server is already down before the
+    # client asks it for anything
+    # mapping.crash()
+
+    first: string = mapping.mapChunk("chunk001.txt")   # step 3: add  , retries=2
+    second: string = mapping.mapChunk("chunk002.txt")  # step 2: add  , deadline=0.3
+
+    # step 4: uncomment both. You bring it back, here, and it answers
+    # mapping.restart()
+    # again: string = mapping.mapChunk("chunk002.txt")
+
+    # The reduce cannot start until both maps have come back. That wait is
+    # the barrier, and on the timeline it is the gap before this line.
+    counts: string = reducing.reduceChunk(first)
+
+# `times` is how many rounds of the job to run.
+client = Calls(run=story, times=1)                     # step 5: make it 4
+
+world.run(client)

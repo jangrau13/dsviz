@@ -19,13 +19,14 @@ copy and so nothing to fall behind.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import pathlib
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
-from . import assets
+from . import assets, exercise
 
 # The exercise checkout: the workspace, the hand-ins and the starters are all
 # relative to where the student ran the command, never to where the package
@@ -137,6 +138,9 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/workspace":
             self._json(200, {"files": load_workspace(self.root)})
             return
+        if self.path in ("/", "/index.html"):
+            self._send_page()
+            return
         served = self._from_package()
         if served is not None:
             self._send_file(served)
@@ -163,6 +167,27 @@ class Handler(SimpleHTTPRequestHandler):
             if candidate.is_file():
                 return candidate
         return None
+
+    def _send_page(self) -> None:
+        """
+        The editor, told which tasks this exercise consists of.
+
+        The list is injected as it is served rather than written into the
+        packaged page: one page serves every exercise, and a page edited on
+        disk would be a per-exercise copy of the editor again.
+        """
+        page = (assets.web_dir() / "index.html").read_text()
+        names = ",".join(exercise.task_names(self.root))
+        renamed = html.escape(json.dumps(exercise.titles(self.root)), quote=True)
+        tag = (f'<meta name="dsviz-tasks" content="{names}">\n'
+               f'<meta name="dsviz-titles" content=\'{renamed}\'>\n')
+        page = page.replace("</head>", tag + "</head>", 1)
+        body = page.encode()
+        self.send_response(200)
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_file(self, path: pathlib.Path) -> None:
         body = path.read_bytes()
@@ -287,6 +312,7 @@ def grade() -> int:
         print("No held-out data — grading the visible criteria only "
               "(local run).\n")
 
+    offered = exercise.task_names(root)
     files = sorted((root / "solutions").glob("*.ds"))
     if not files:
         print("No solutions found in solutions/.")
@@ -297,12 +323,12 @@ def grade() -> int:
     graded = 0
     for path in files:
         task = path.stem
-        spec = ASSIGNMENTS.get(task)
+        spec = ASSIGNMENTS.get(task) if task in offered else None
         if spec is None:
-            # Not a recognised task name. Say so loudly: a typo here used to
+            # Not a task of this exercise. Say so loudly: a typo here used to
             # mean the file was skipped and the build went green on nothing.
-            print(f"FAIL {path.name}: no task called {task!r}")
-            print(f"       · rename it to one of: {', '.join(sorted(ASSIGNMENTS))}")
+            print(f"FAIL {path.name}: this exercise has no task called {task!r}")
+            print(f"       · rename it to one of: {', '.join(offered)}")
             failed.append(path.name)
             continue
         graded += 1
@@ -345,8 +371,18 @@ def grade() -> int:
 
 def tasks() -> int:
     from .assignment import ASSIGNMENTS
-    for name, spec in ASSIGNMENTS.items():
-        print(f"{name:<16} {spec.title}")
+
+    root = project_root()
+    for name in exercise.task_names(root):
+        print(f"{name:<16} "
+              f"{exercise.title_for(root, name, ASSIGNMENTS[name].title)}")
+    missing = exercise.unknown_tasks(root)
+    if missing:
+        # A name that no longer exists is dropped from the editor silently, so
+        # this is the one place it can be noticed before a student does.
+        print(f"\nnot in this dsviz: {', '.join(missing)}", file=sys.stderr)
+        print("upgrade with: uv lock --upgrade-package dsviz", file=sys.stderr)
+        return 1
     return 0
 
 

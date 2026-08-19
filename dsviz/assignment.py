@@ -513,8 +513,81 @@ CLOCKS = Assignment(
     dialect="rpc",
 )
 
+MR_OVER_RPC = Assignment(
+    name="t5-mr-rpc",
+    title="Task 3: map and reduce on separate servers",
+    goals=["rpc", "failure", "mapreduce", "locality"],
+    brief="The same word count as Task 1, except the map and the reduce now "
+          "live on different machines and the client has to ask each of them "
+          "across a network.",
+    steps=[
+        "Run it as given, and watch the client wait for each server in turn.",
+        "Give the map call a deadline it cannot meet, and read what the "
+        "client is told.",
+        "Crash the map server before the call, and retry into it. A machine "
+        "that is down is still down when the retry arrives.",
+        "Make it unreliable instead of dead, and work out when a retry is "
+        "worth anything at all.",
+    ],
+    dialect="rpc",
+)
+
+TELEMETRY = Assignment(
+    name="t6-telemetry",
+    title="Task 2: finding the shuffle",
+    goals=["locality", "cost"],
+    brief="Readings arrive one row per sensor; the question is per room. "
+          "Somewhere in between, every reading for a room has to reach the "
+          "same machine, and that move is the expensive part.",
+    steps=[
+        "Run it and say, from the diagram, which line caused the barrier.",
+        "Move the filter earlier and see whether the shuffle gets cheaper.",
+        "Lose the grouped step, then lose the one before it, and compare "
+        "what has to be rebuilt.",
+        "Make one executor slow, and find the straggler on the timeline.",
+    ],
+    dialect="rpc",
+)
+
+KMEANS = Assignment(
+    name="t7-kmeans",
+    title="Task 3: the same points, round after round",
+    goals=["latency", "cost", "locality"],
+    brief="k-means repeats one pass until it settles. Assigning points needs "
+          "no coordination; recomputing the centroids needs all of them. "
+          "Keeping the points in memory is what makes the repetition cheap.",
+    steps=[
+        "Run it and count the stages. Say which had to wait for every "
+        "machine and which did not.",
+        "Take the cache away, and say what a third round would now cost.",
+        "Lose the cached points, and note that the lineage rebuilt them "
+        "rather than reading them off disk.",
+        "Add a third round, and describe how the pipeline grows per round.",
+    ],
+    dialect="rpc",
+)
+
+LAMPORT = Assignment(
+    name="t8-lamport",
+    title="Task 1: one number per process",
+    goals=["causality"],
+    brief="A Lamport timestamp guarantees that if a happened before b then "
+          "L(a) < L(b). It does not guarantee the converse, and seeing where "
+          "that breaks is the point of the task.",
+    steps=[
+        "Run it and read the counters off the diagram.",
+        "Add a message from a process that has not heard from the others, "
+        "and compare its number with one it cannot know about.",
+        "Find two events whose numbers cannot order them.",
+        "Make a process slow, and confirm the counters do not move.",
+    ],
+    dialect="rpc",
+)
+
 ASSIGNMENTS = {a.name: a for a in (
-    RPC_BASICS, WORD_COUNT, COMBINER, SPARK_MEMORY, CLOCKS)}
+    RPC_BASICS, WORD_COUNT, COMBINER, MR_OVER_RPC,
+    SPARK_MEMORY, TELEMETRY, KMEANS,
+    LAMPORT, CLOCKS)}
 
 
 def load_holdout(path: str | None = None) -> bool:

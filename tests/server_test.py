@@ -83,11 +83,29 @@ shutil.copytree(HERE / "tasks", root / "app" / "tasks")
 (root / ".devcontainer").mkdir()
 shutil.copy(HERE / "server" / "serve.py", root / ".devcontainer" / "serve.py")
 
-PORT = 8731
+def free_port() -> int:
+    """
+    A port nothing else is on.
+
+    A fixed port made this suite lie: a server left over from an earlier run
+    was still holding it, the new one failed to bind, and the test talked to
+    the old server — which was rooted at a temporary directory that no longer
+    existed. It failed on the second assertion rather than the first, which is
+    the worst way for a test to be wrong.
+    """
+    import socket
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+PORT = free_port()
 proc = subprocess.Popen([sys.executable, str(root / ".devcontainer" / "serve.py"),
                          str(PORT)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 base = f"http://127.0.0.1:{PORT}"
 for _ in range(80):
+    if proc.poll() is not None:
+        raise SystemExit(f"the server exited: {proc.stdout.read().decode()}")
     try:
         request(f"{base}/api/workspace")
         break

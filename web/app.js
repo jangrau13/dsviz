@@ -1295,6 +1295,28 @@ function loadCatalogue() {
   assignments = JSON.parse(fn());
   fn.destroy();
 
+  // One package ships every task the course has; an exercise offers a few of
+  // them. The server injects the list when it serves this page, so the Spark
+  // exercise does not present a word-count MapReduce. No tag means no
+  // exercise around us — show everything, which is what this repo wants.
+  const only = document.querySelector('meta[name="dsviz-tasks"]')?.content ?? "";
+  if (only.trim()) {
+    const wanted = only.split(",").map((s) => s.trim()).filter(Boolean);
+    assignments = wanted
+      .map((n) => assignments.find((a) => a.name === n))
+      .filter(Boolean);
+  }
+
+  // A task keeps one id across the course and is numbered by the exercise
+  // that uses it, so the heading comes from the exercise when it says one.
+  const renamed = document.querySelector('meta[name="dsviz-titles"]')?.content;
+  if (renamed) {
+    try {
+      const byName = JSON.parse(renamed);
+      for (const a of assignments) if (byName[a.name]) a.title = byName[a.name];
+    } catch { /* a malformed override leaves the package's own titles */ }
+  }
+
   const sel = $("examples");
   sel.innerHTML = "";
   const asg = document.createElement("optgroup");

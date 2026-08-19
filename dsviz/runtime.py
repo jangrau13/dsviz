@@ -225,7 +225,15 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
 
     # Calls run in source order across the whole program, so a machine that both
     # answers and calls behaves the way it reads.
-    clocks = Clocks([i.var for i, k in built if k.kind == "process"])
+    #
+    # Which clock the processes keep is the job's to say. The same chat runs
+    # under either, and what separates them is exactly what the exercise is
+    # about: a Lamport stamp orders everything, including events that are not
+    # related, so a smaller number never proves a message came first.
+    processes = [i.var for i, k in built if k.kind == "process"]
+    wanted = next((str(j.settings["clock"]) for j in mod.jobs
+                   if j.settings.get("clock")), "vector")
+    clocks = LamportClocks(processes) if wanted == "lamport" else Clocks(processes)
 
     for inst, cls in built:
         for method in sorted(cls.methods.values(), key=lambda m: m.line):
@@ -303,6 +311,40 @@ class Clocks:
         self.at[to] = merged
         c._emit(c.machines[to].clock, "clock", to,
                 clock=list(merged), label=f"recv {label}")
+
+
+class LamportClocks:
+    """
+    One number per process, which is all Lamport's rule needs.
+
+    A send increments the sender's counter and carries it; a receive takes the
+    larger of the two and then increments. That gives the guarantee students
+    are asked to state precisely — if a happened before b then L(a) < L(b) —
+    and, just as importantly, not its converse. Two unrelated events can come
+    out in either order, or equal, and the number cannot tell you which.
+
+    The counter is emitted as a plain integer rather than a one-element list,
+    because the diagram should show `3` and not `[3]`: the whole point beside a
+    vector clock is that there is nothing here to compare pointwise.
+    """
+
+    def __init__(self, names: list[str]):
+        self.names = names
+        self.at = {n: 0 for n in names}
+
+    def __bool__(self) -> bool:
+        return bool(self.names)
+
+    def send(self, c: Cluster, frm: str, to: str, label: str) -> None:
+        if frm not in self.at or to not in self.at:
+            return
+        self.at[frm] += 1
+        stamp = self.at[frm]
+        c._emit(c.machines[frm].clock, "clock", frm, clock=stamp, label=label)
+
+        self.at[to] = max(self.at[to], stamp) + 1
+        c._emit(c.machines[to].clock, "clock", to,
+                clock=self.at[to], label=f"recv {label}")
 
 
 def run_pipeline(mod, c: Cluster, job, run) -> bool:

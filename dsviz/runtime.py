@@ -262,14 +262,21 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
         settings = {}
         for key, (default, cast) in MACHINE_SETTINGS.items():
             settings[key] = cast(inst.settings.get(key, declared.get(key, default)))
-        c.machine(inst.var, role=kind["role"], **settings)
+        # What this machine starts out remembering. The class says which
+        # fields exist, because that is what makes it this kind of machine;
+        # the instance may start any of them somewhere else, so two ledgers
+        # of one kind can open with different balances.
+        state = {name: inst.settings.get(name, held.value)
+                 for name, held in cls.state.items()}
+        c.machine(inst.var, role=kind["role"], state=state, **settings)
 
     for inst, cls in built:
         if not MACHINE_KINDS[cls.kind]["serves"]:
             continue
         for method in cls.methods.values():
-            c.machines[inst.var].serve(method.name, duration=_duration(method),
-                                       handler=_handler(method))
+            c.machines[inst.var].serve(
+                method.name, duration=_duration(method),
+                handler=_handler(method, c.machines[inst.var]))
 
     # Calls run in source order across the whole program, so a machine that both
     # answers and calls behaves the way it reads.
@@ -294,8 +301,7 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
 
     for inst, cls in built:
         for method in sorted(cls.methods.values(), key=lambda m: m.line):
-            for call in method.calls:
-                _perform(c, inst.var, call, clocks)
+            _perform_all(c, inst.var, method.calls, clocks)
 
     # A job whose work is a sequence of calls. MapReduce hands the runtime three
     # functions to orchestrate; this hands it one function that is the work. The
@@ -349,8 +355,7 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
                 for machine in c.machines.values():
                     machine.items.clear()
             env: dict = {}
-            for call in fn.calls:
-                _perform(c, job.var, call, clocks, env)
+            _perform_all(c, job.var, fn.calls, clocks, env)
     if hasattr(clocks, "flush"):
         clocks.flush(c)
     return c
@@ -691,7 +696,7 @@ def run_pipeline(mod, c: Cluster, job, run) -> bool:
     return True
 
 
-def _handler(method):
+def _handler(method, machine=None):
     """
     Run a service method's own body to produce the reply.
 
@@ -700,6 +705,12 @@ def _handler(method):
     method's name. Running the body means the value on the wire is the one the
     student's code computed — change `return amount * 2` and the picture
     changes with it.
+
+    The machine is passed in because a method may do more than answer: what it
+    remembers is handed to the body as ordinary names, and a binding to one of
+    them changes the machine. Each change is announced afterwards rather than
+    written silently, so the diagram shows the value moving at the moment the
+    work finished.
     """
     from .expr import Budget, run_function
 
@@ -708,13 +719,51 @@ def _handler(method):
 
     def handle(payload):
         args = dict(zip(method.params, [payload]))
+        held = machine.state if machine is not None else None
+        before = dict(held) if held else {}
         try:
-            return run_function(method, args, Budget())
+            return run_function(method, args, Budget(), state=held)
         except Exception:
             # A body that cannot run must not take the simulation down with
             # it; the call still happened, it simply has nothing to report.
             return None
+        finally:
+            # Whatever the body did to the machine is said out loud, even if
+            # it then failed on a later line: the change happened, and a
+            # diagram that hid it would not be a picture of this run.
+            for field, value in list(held.items()) if held else []:
+                if value != before.get(field):
+                    machine.remember(field, value, reason=method.name)
     return handle
+
+
+def _perform_all(c: Cluster, caller: str, calls: list,
+                 clocks=None, env=None) -> None:
+    """
+    Perform one function's calls: each after the last, except where the
+    program said otherwise.
+
+    A run of calls written inside the same `with parallel():` block is
+    performed inside the caller's fork, so all of them leave at the moment the
+    block began and the caller is left standing at the last reply. Everything
+    else is unchanged, which is the point: sequential is what a program does
+    unless it says it does not.
+    """
+    machine = c.machines.get(caller)
+    i = 0
+    while i < len(calls):
+        group = calls[i].group
+        if not group or machine is None:
+            _perform(c, caller, calls[i], clocks, env)
+            i += 1
+            continue
+        end = i
+        while end < len(calls) and calls[end].group == group:
+            end += 1
+        with machine.parallel():
+            for call in calls[i:end]:
+                _perform(c, caller, call, clocks, env)
+        i = end
 
 
 def _perform(c: Cluster, caller: str, call, clocks=None, env=None) -> None:

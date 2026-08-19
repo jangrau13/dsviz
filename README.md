@@ -23,7 +23,7 @@ or as a live diagram in the browser.
 
 | Module | What it does |
 |---|---|
-| `core.py` | Machines, messages, time, failure. SimPy-backed. |
+| `core.py` | Machines, what they remember, messages, time, failure. SimPy-backed. |
 | `patterns.py` | Exercise vocabulary: `map_reduce`, `spark_job`, `VectorClockRun` |
 | `types.py` | The notation's static type system |
 | `notation.py` | Student-facing syntax, type checker, linter |

@@ -64,20 +64,38 @@ class FrameScene(Scene):
 
         built = {id(s): self._build(s) for s in f}
 
+        # What a machine remembers is one badge that keeps being rewritten,
+        # not a pile of readings. Each shape carries the machine and field it
+        # belongs to, and a new value for a key already on screen *replaces*
+        # the old one — so the number visibly moves, which is the whole reason
+        # to draw state at all.
+        showing: dict = {}
+
+        def appear(s):
+            """The animation that puts this shape on screen."""
+            m = built[id(s)]
+            key = s.meta.get("key") if s.kind == "state" else None
+            if key is not None and key in showing:
+                old, showing[key] = showing[key], m
+                return ReplacementTransform(old, m)
+            if key is not None:
+                showing[key] = m
+            return FadeIn(m, shift=UP * 0.15)
+
         # Everything present at t=0 appears together.
-        base = VGroup(*[built[id(s)] for s in static if built[id(s)]])
-        if len(base):
-            self.play(LaggedStart(*[FadeIn(m) for m in base], lag_ratio=0.08))
+        base = [s for s in static if built[id(s)] is not None]
+        if base:
+            self.play(LaggedStart(*[appear(s) for s in base], lag_ratio=0.08))
 
         # Then the timed shapes, grouped by instant so simultaneous things
         # animate together rather than queueing up.
         for t in sorted({s.t_in for s in timed}):
-            group = [built[id(s)] for s in timed
+            group = [s for s in timed
                      if s.t_in == t and built[id(s)] is not None]
             if not group:
                 continue
-            self.play(LaggedStart(*[FadeIn(m, shift=UP * 0.15) for m in group],
-                                  lag_ratio=0.12), run_time=0.7)
+            self.play(LaggedStart(*[appear(s) for s in group], lag_ratio=0.12),
+                      run_time=0.7)
 
         self.wait(1.5)
 
@@ -109,6 +127,22 @@ class FrameScene(Scene):
                                   stroke_color=s.color, stroke_width=2,
                                   fill_color=s.color, fill_opacity=0.18)
             return VGroup(bg, label).scale(0.55).move_to([s.x, s.y, 0])
+
+        if s.kind == "state":
+            # A machine's own memory, drawn as a plaque on the floor of its
+            # box: squarer than a chip and the full width of the machine, so
+            # it reads as part of the machine rather than as something passing
+            # through it.
+            label = Text(s.text, font_size=17, font="Menlo", color=s.color)
+            room = max(s.w - 0.12, 0.2)
+            if label.width > room:
+                label.scale(room / label.width)
+            plate = RoundedRectangle(corner_radius=0.05, width=max(s.w, 0.4),
+                                     height=max(s.h, 0.2),
+                                     stroke_color=s.color, stroke_width=1.5,
+                                     fill_color=s.color, fill_opacity=0.16)
+            label.move_to(plate)
+            return VGroup(plate, label).move_to([s.x, s.y, 0])
 
         if s.kind == "lane":
             line = Line([s.x, s.y, 0], [s.x2, s.y2, 0],

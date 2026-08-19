@@ -33,6 +33,47 @@ fast = Worker(speed=1.0)
 slow = Worker(speed=0.3)
 ```
 
+### `field: type = value`
+
+What a machine remembers.
+
+Written in the class body, above the methods: a name, its type, and the value it starts at. A machine without state answers the same thing however often it is asked; with it, the second call can see what the first one did. Every machine of that kind has its own — two of them never share a value — and an instance may start somewhere else by naming the field when it is made. It is drawn along the bottom of the machine on the diagram, and it changes there as the run goes on.
+
+```python
+@machine
+class Ledger:
+    balance: int = 120
+
+    @duration(0.4)
+    def deposit(amount: int) -> int:
+        balance: int = balance + amount
+        return balance
+```
+
+### `field: type = expression`
+
+Change what a machine remembers.
+
+Inside a method the field is an ordinary name: it reads as what the machine currently holds, and writing to it changes the machine rather than a local that is thrown away when the call returns. Which of the two you get is decided by the class declaration and nothing else, so a parameter may not carry a field's name.
+
+```python
+@duration(0.4)
+def deposit(amount: int) -> int:
+    balance: int = balance + amount
+    return balance
+```
+
+### `name = Kind(field=value)`
+
+Start one machine somewhere else.
+
+The class says which fields exist, because that is what makes it this kind of machine; each instance may say what its own start at. That is how two machines of one kind differ in what they hold rather than only in how fast they are.
+
+```python
+vault = Ledger(balance=5000)
+petty = Ledger(balance=40)
+```
+
 ### `Kind(speed=N)`
 
 Relative speed of one machine.
@@ -89,7 +130,7 @@ slow_to_recover = Worker(error_rate=0.2, on_crash="restart", restart_after=3.0)
 
 Take a machine down.
 
-The machine loses its in-memory state, and messages already in flight to it are dropped.
+Everything it remembers goes back to the value it started at, whatever it had been counted up to since, and messages already in flight to it are dropped. On the diagram the machine's own values drop back at the moment it breaks, which is the cost of losing it.
 
 ```python
 bank.crash()
@@ -99,7 +140,7 @@ bank.crash()
 
 Bring a machine back.
 
-It comes back with no state, so anything it held has to be recomputed.
+It comes back as it was declared, not as it was a moment before it broke, so anything it had worked out has to be worked out again.
 
 ```python
 bank.restart()

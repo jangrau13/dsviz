@@ -6,7 +6,8 @@ description: Statements, types, and what is written down.
 # Writing a program
 
 One statement per line. `#` starts a comment. Indentation delimits the
-body of a function, a loop or a conditional, as in Python.
+body of a function, a loop, a conditional or a parallel block, as in
+Python.
 
 Every name carries a written type. Nothing is inferred: a parameter, a
 local, a loop variable and a return type are all stated, and the checker

@@ -92,6 +92,25 @@ class RemoteCall:
     # Threading it through is what lets the next call be given the value rather
     # than the word.
     bind: str = ""
+    # The `with parallel():` block this call is inside, identified by that
+    # block's line, or 0 for a call written on its own. Calls sharing a group
+    # leave together; everything else is one after the other.
+    group: int = 0
+    # The arguments that were written as bare names rather than literals.
+    # `args` cannot say which: it holds the value, and by then `chf` and
+    # `"chf"` are the same string. Knowing which is which is what lets the
+    # checker tell a call that depends on another's answer from one that
+    # merely mentions a word.
+    uses: list = field(default_factory=list)
+
+
+@dataclass
+class WithBlock:
+    """A `with …():` block inside a function, as written."""
+    name: str
+    line: int
+    nested: bool = False      # does it contain another such block
+    calls: int = 0            # how many calls out are inside it
 
 
 @dataclass
@@ -107,9 +126,37 @@ class Method:
     # Calls this method makes on other machines, read off the parse tree so the
     # runtime never has to re-read the source to find them.
     calls: list = field(default_factory=list)
+    # The `with …():` blocks it contains. Kept even when the name is not one
+    # the language has, so the checker can say so on the right line.
+    blocks: list = field(default_factory=list)
 
     def decorator(self, name: str) -> Decorator | None:
         return next((d for d in self.decorators if d.name == name), None)
+
+
+@dataclass
+class StateField:
+    """
+    Something a machine remembers between calls.
+
+        @machine
+        class Ledger:
+            balance: int = 100
+
+    A machine that only answers is a function with a network in front of it:
+    ask it twice and it says the same thing twice, and nothing it did is
+    visible afterwards. State is what makes it a machine — the second call
+    can see what the first one did — and it is also what a crash destroys,
+    which is the reason failure matters at all in this course.
+
+    Written exactly as a local binding is, because it is the same statement
+    said about a longer-lived name: a written type, and the value it starts
+    at.
+    """
+    name: str
+    type: str
+    value: object
+    line: int
 
 
 @dataclass
@@ -120,6 +167,10 @@ class ClassDecl:
     methods: dict
     line: int
     body: list = field(default_factory=list)   # statements outside any method
+    # What machines of this kind remember, by field name. Declared on the
+    # class because it is what every machine of this kind holds; the value
+    # each one starts at may still differ per instance.
+    state: dict = field(default_factory=dict)
 
     def decorator(self, name: str) -> Decorator | None:
         return next((d for d in self.decorators if d.name == name), None)
@@ -512,6 +563,14 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
             for inner in let.find_data("remote_call"):
                 bound[id(inner)] = _tok(let.children[0])
 
+        # Which calls were written inside a `with parallel():` block. The
+        # block's own line names the group: it is stable, it sorts the way the
+        # source reads, and it is the line to point an error at.
+        grouped = {}
+        for block in node.find_data("with_stmt"):
+            for inner in block.find_data("remote_call"):
+                grouped[id(inner)] = position(block)[0]
+
         found = []
         for call in node.find_data("remote_call"):
             target, method = receiver(call), call.children[1]
@@ -519,16 +578,30 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
                 continue                  # a method on an expression, not a call out
             arglist = next((c for c in call.children[2:]
                             if getattr(c, "data", None) == "args"), None)
-            args, options = [], {}
+            args, options, uses = [], {}, []
             for child in (arglist.children if arglist is not None else []):
                 if getattr(child, "data", None) == "kwarg":
                     key, value = child.children
                     options[_tok(key)] = _literal(value)
                 else:
                     args.append(_literal(child))
+                    if getattr(child, "data", None) == "var":
+                        uses.append(_tok(child.children[0]))
             found.append(RemoteCall(target, _tok(method), args, options,
-                                    position(call)[0], bound.get(id(call), "")))
+                                    position(call)[0], bound.get(id(call), ""),
+                                    grouped.get(id(call), 0), uses))
         return sorted(found, key=lambda c: c.line)
+
+    def blocks_in(node) -> list:
+        """Every `with …():` block in a def, in source order."""
+        out = []
+        for block in node.find_data("with_stmt"):
+            inside = [b for b in block.find_data("with_stmt") if b is not block]
+            out.append(WithBlock(_tok(block.children[1]), position(block)[0],
+                                 bool(inside),
+                                 len([c for c in block.find_data("remote_call")
+                                      if receiver(c)])))
+        return sorted(out, key=lambda b: b.line)
 
     def method_of(node, decorators) -> Method:
         name, params, ret = "", None, "any"
@@ -546,7 +619,8 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
             names.append(_tok(pname))
             types.append(_tok(ptype))
         return Method(name, names, types, ret, body_of(node),
-                      position(node)[0], decorators, calls_in(node))
+                      position(node)[0], decorators, calls_in(node),
+                      blocks_in(node))
 
     def decorators_of(nodes) -> list:
         out = []
@@ -566,7 +640,14 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
         cls = ClassDecl(name, decorators, {}, position(node)[0])
         for child in node.children:
             kind = getattr(child, "data", None)
-            if kind == "func_def":
+            if kind == "let_stmt":
+                # `balance: int = 100` in a class body — what a machine of this
+                # kind remembers, and what it starts at.
+                fname, ftype, value = child.children
+                cls.state[_tok(fname)] = StateField(
+                    _tok(fname), _tok(ftype), _literal(value),
+                    position(child)[0])
+            elif kind == "func_def":
                 m = method_of(child, [])
                 cls.methods[m.name] = m
             elif kind == "decorated":
@@ -878,6 +959,80 @@ def check_calls(mod: Module) -> list[Diagnostic]:
     return diags
 
 
+def callers_in(mod: Module) -> list:
+    """Every function that can contain a call: a method, or a job's work."""
+    out = [method
+           for cls in mod.classes.values()
+           for method in cls.methods.values()]
+    return out + list(mod.functions.values())
+
+
+def check_parallel(mod: Module) -> list[Diagnostic]:
+    """
+    What `with parallel():` means, and the two ways of getting it wrong.
+
+    The block is the one place in the language where two things happen at
+    once, so it is also the one place where the ordinary reading of a
+    function — this line, then the next — does not hold. Both checks here are
+    about that: a block that contains a call needing another call's answer has
+    been written as if the lines still ran one after the other, and there is
+    no order in which it could work.
+
+    The name is checked rather than fixed by the grammar so the message can
+    say what does exist, instead of the parser saying only that the line is
+    wrong.
+    """
+    diags: list[Diagnostic] = []
+
+    for caller in callers_in(mod):
+        for block in getattr(caller, "blocks", []):
+            if block.name != "parallel":
+                diags.append(Diagnostic(
+                    block.line, 1, "error",
+                    f"there is no {block.name}() to run a block in",
+                    hint="the only block is 'with parallel():', which sends "
+                         "the calls inside it at the same time"))
+                continue
+            if block.nested:
+                diags.append(Diagnostic(
+                    block.line, 1, "error",
+                    "a parallel block cannot contain another one",
+                    hint="everything in one block already leaves together, "
+                         "so a block inside it has nothing left to say"))
+            if block.calls == 0:
+                diags.append(Diagnostic(
+                    block.line, 1, "warning",
+                    "this parallel block calls nothing",
+                    hint="put the calls that should happen at the same time "
+                         "inside it"))
+            elif block.calls == 1:
+                diags.append(Diagnostic(
+                    block.line, 1, "warning",
+                    "a parallel block with one call in it is that call",
+                    hint="one call is one call however it is written; a "
+                         "second one in the block is what makes a difference"))
+
+        # Nothing in the block can be given what another call in the same
+        # block returns. Written sequentially this is ordinary — the whole
+        # point of `chf` is that the next line uses it — which is exactly why
+        # it has to be said here rather than left to produce a null.
+        for line in sorted({c.group for c in caller.calls if c.group}):
+            group = [c for c in caller.calls if c.group == line]
+            bound = {c.bind for c in group if c.bind}
+            for call in group:
+                needs = [u for u in call.uses if u in bound and u != call.bind]
+                if not needs:
+                    continue
+                diags.append(Diagnostic(
+                    call.line, 1, "error",
+                    f"this call is given {needs[0]!r}, which nothing has "
+                    f"answered yet",
+                    hint=f"every call in the block leaves at the same moment, "
+                         f"so none of them can have {needs[0]!r} — move this "
+                         f"call below the block, where the answers are in"))
+    return diags
+
+
 def check_jobs(mod: Module) -> list[Diagnostic]:
     """
     Every function handed to a job must fit the position it is given.
@@ -935,6 +1090,18 @@ def check_machines(mod: Module) -> list[Diagnostic]:
                         f"{value!r} is not something a machine can do about crashing",
                         hint='on_crash is "stay_dead" or "restart"'))
                 continue
+            # `vault = Ledger(balance=500)` — this machine starts out
+            # remembering something else. Same field, same type; only the
+            # value it begins at is the instance's to choose.
+            held = cls.state.get(key)
+            if held is not None:
+                from .expr import compatible, type_of
+                if not compatible(type_of(value), held.type):
+                    diags.append(Diagnostic(
+                        inst.line, 1, "error",
+                        f"{key} is {inst.cls}'s state and is {held.type}, "
+                        f"but {value!r} is a {type_of(value)}"))
+                continue
             if key not in MACHINE_SETTINGS:
                 continue
             try:
@@ -960,6 +1127,92 @@ def check_machines(mod: Module) -> list[Diagnostic]:
                 f"{inst.var} says how long it takes to restart, but not that "
                 f"it restarts",
                 hint='add on_crash="restart"'))
+    return diags
+
+
+# The types a machine may remember. `void` is the absence of a value, so
+# there is nothing there to hold; everything else the language has is
+# something a machine can be handed back later.
+STATE_TYPES = ("int", "string", "[int]", "[string]", "pair")
+
+
+def check_state(mod: Module) -> list[Diagnostic]:
+    """
+    What a machine remembers has to be something it can remember.
+
+    Four mistakes, all of them silent without this. A field declared `void`
+    holds nothing, so the machine would read as one that forgets instantly. A
+    field whose starting value disagrees with its written type is the mistake
+    the language already refuses inside a function, and it has to be the same
+    mistake here. A method whose parameter carries the field's name shadows
+    it, so the line the student wrote to update the machine updates the
+    argument instead and the state never moves — which looks exactly like the
+    simulator being broken. And an update that renames the type is the same
+    slip one line further on.
+    """
+    from .expr import compatible, type_of
+
+    diags: list[Diagnostic] = []
+    for cls in mod.classes.values():
+        if cls.state and not cls.methods:
+            # A field only ever changes from inside a method. A class with
+            # state and nothing to run it is a machine that will hold its
+            # starting value all run and look, on the diagram, exactly like
+            # one that is working.
+            first = min(cls.state.values(), key=lambda f: f.line)
+            diags.append(Diagnostic(
+                first.line, 1, "warning",
+                f"{cls.name} remembers something, but has no method that "
+                f"could change it",
+                hint="what a machine remembers changes inside a method it "
+                     "answers; without one it holds its starting value all "
+                     "run"))
+        for f in cls.state.values():
+            if f.type not in STATE_TYPES:
+                diags.append(Diagnostic(
+                    f.line, 1, "error",
+                    f"a machine cannot remember a {f.type}",
+                    hint=f"state is one of: {', '.join(STATE_TYPES)}"))
+                continue
+            got = type_of(f.value)
+            if not compatible(got, f.type):
+                diags.append(Diagnostic(
+                    f.line, 1, "error",
+                    f"{f.name} is declared {f.type}, but it starts at a {got}",
+                    hint=f"give it a {f.type} to start from"))
+            if f.name in cls.methods:
+                diags.append(Diagnostic(
+                    f.line, 1, "error",
+                    f"{cls.name} has both a method and a field called "
+                    f"{f.name!r}",
+                    hint="one name means one thing"))
+
+        for method in cls.methods.values():
+            for param in method.params:
+                if param in cls.state:
+                    diags.append(Diagnostic(
+                        method.line, 1, "error",
+                        f"{method.name}'s parameter {param!r} has the same "
+                        f"name as {cls.name}'s state",
+                        hint=f"rename the parameter — inside a method, "
+                             f"{param} is what the machine remembers"))
+            # Updating a field is an ordinary typed binding, so the type on it
+            # is the field's own. Writing another one would change what the
+            # machine holds into something the next method to read it cannot
+            # use.
+            for _indent, text, line in method.body:
+                m = BIND_RE.match(text)
+                if m is None:
+                    continue
+                held = cls.state.get(m.group("var"))
+                if held is None or m.group("type") == held.type:
+                    continue
+                diags.append(Diagnostic(
+                    line, 1, "error",
+                    f"{held.name} is {cls.name}'s state and is {held.type}, "
+                    f"but this line calls it {m.group('type')}",
+                    hint=f"write '{held.name}: {held.type} = ...' to update "
+                         f"it"))
     return diags
 
 
@@ -1013,8 +1266,9 @@ def check_world(mod: Module) -> list[Diagnostic]:
 def lint(source: str) -> tuple[Module, list[Diagnostic]]:
     """Parse and check a program. One front end, one checker, every dialect."""
     mod, diags = from_tree(source)
-    return mod, diags or (check_calls(mod) + check_jobs(mod)
-                          + check_world(mod) + check_machines(mod))
+    return mod, diags or (check_calls(mod) + check_parallel(mod)
+                          + check_jobs(mod) + check_world(mod)
+                          + check_machines(mod) + check_state(mod))
 
 
 # Settings every machine has, whatever kind it is, with what each means when

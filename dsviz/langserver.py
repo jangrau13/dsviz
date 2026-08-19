@@ -107,6 +107,27 @@ DOCS: list[SymbolDoc] = [
               "so you can run one job on three machines and then on ten.",
               (MAPREDUCE, SPARK, RPC, CLOCKS),
               "world.run(job)\nworld.run(job, on=[m1, r1])"),
+    SymbolDoc("parallel", "with parallel():",
+              "Calls that all leave at the same time.",
+              "Calls are one after another: each moves the caller past the "
+              "whole round trip, so the next one leaves from where the last "
+              "finished. Everything written inside this block leaves at the "
+              "moment the block begins instead, and the block ends when the "
+              "last reply is back \u2014 so asking three machines costs one "
+              "round trip rather than three. The far end is unchanged, which "
+              "is the half worth watching: a machine answers one request at a "
+              "time, so three calls sent at once to the same machine still "
+              "queue behind each other. What the block saves is the waiting "
+              "on the wire, never the work \u2014 it pays because the machines "
+              "are different, not because the calls were written together. "
+              "No call in the block can be given what "
+              "another call in it answers, because none of them has answered "
+              "yet; use the value below the block.",
+              (MAPREDUCE, SPARK, RPC, CLOCKS),
+              'def story() -> void:\n'
+              '    with parallel():\n'
+              '        here: int = bank.balance("savings")\n'
+              '        there: int = mirror.balance("savings")'),
     SymbolDoc("times", "Job(..., times=N)", "How many rounds the job runs.",
               "The job runs N times over. That is what you want in a video, "
               "and it is what makes an unreliable run worth watching, because "
@@ -142,6 +163,42 @@ DOCS: list[SymbolDoc] = [
               (MAPREDUCE, SPARK, RPC, CLOCKS),
               'slow_to_recover = Worker(error_rate=0.2, on_crash="restart", '
               'restart_after=3.0)'),
+    SymbolDoc("state", "field: type = value", "What a machine remembers.",
+              "Written in the class body, above the methods: a name, its "
+              "type, and the value it starts at. A machine without state "
+              "answers the same thing however often it is asked; with it, "
+              "the second call can see what the first one did. Every machine "
+              "of that kind has its own — two of them never share a value — "
+              "and an instance may start somewhere else by naming the field "
+              "when it is made. It is drawn along the bottom of the machine "
+              "on the diagram, and it changes there as the run goes on.",
+              (MAPREDUCE, SPARK, RPC, CLOCKS),
+              "@machine\nclass Ledger:\n"
+              "    balance: int = 120\n\n"
+              "    @duration(0.4)\n"
+              "    def deposit(amount: int) -> int:\n"
+              "        balance: int = balance + amount\n"
+              "        return balance"),
+    SymbolDoc("update", "field: type = expression",
+              "Change what a machine remembers.",
+              "Inside a method the field is an ordinary name: it reads as "
+              "what the machine currently holds, and writing to it changes "
+              "the machine rather than a local that is thrown away when the "
+              "call returns. Which of the two you get is decided by the class "
+              "declaration and nothing else, so a parameter may not carry a "
+              "field's name.",
+              (MAPREDUCE, SPARK, RPC, CLOCKS),
+              "@duration(0.4)\ndef deposit(amount: int) -> int:\n"
+              "    balance: int = balance + amount\n"
+              "    return balance"),
+    SymbolDoc("starts", "name = Kind(field=value)",
+              "Start one machine somewhere else.",
+              "The class says which fields exist, because that is what makes "
+              "it this kind of machine; each instance may say what its own "
+              "start at. That is how two machines of one kind differ in what "
+              "they hold rather than only in how fast they are.",
+              (MAPREDUCE, SPARK, RPC, CLOCKS),
+              "vault = Ledger(balance=5000)\npetty = Ledger(balance=40)"),
     SymbolDoc("duration", "@duration(T)", "How long a method takes.",
               "Seconds of work at speed 1.0. A machine with speed 0.5 takes "
               "twice as long over the same method.",
@@ -153,12 +210,16 @@ DOCS: list[SymbolDoc] = [
               "how you make a straggler.",
               (MAPREDUCE, SPARK, RPC, CLOCKS), "slow = Worker(speed=0.25)"),
     SymbolDoc("crash", "machine.crash()", "Take a machine down.",
-              "The machine loses its in-memory state, and messages already "
-              "in flight to it are dropped.",
+              "Everything it remembers goes back to the value it started at, "
+              "whatever it had been counted up to since, and messages already "
+              "in flight to it are dropped. On the diagram the machine's own "
+              "values drop back at the moment it breaks, which is the cost of "
+              "losing it.",
               (MAPREDUCE, SPARK, RPC), "bank.crash()"),
     SymbolDoc("restart", "machine.restart()", "Bring a machine back.",
-              "It comes back with no state, so anything it held has to be "
-              "recomputed.",
+              "It comes back as it was declared, not as it was a moment "
+              "before it broke, so anything it had worked out has to be "
+              "worked out again.",
               (MAPREDUCE, SPARK, RPC), "bank.restart()"),
 
     # --- messages between processes ---
@@ -334,11 +395,11 @@ DOCS: list[SymbolDoc] = [
 # describe the language differently.
 GROUPS = [
     ("functions", "Functions", "What you write, and how it is written.",
-     ["def", "emit"]),
+     ["def", "emit", "parallel"]),
     ("machines", "Machines",
      "Declaring a kind of machine, and making ones that exist.",
-     ["class", "instance", "speed", "duration", "error_rate", "on_crash",
-      "restart_after", "crash", "restart", "call"]),
+     ["class", "instance", "state", "update", "starts", "speed", "duration",
+      "error_rate", "on_crash", "restart_after", "crash", "restart", "call"]),
     ("worlds", "Worlds",
      "The machines that exist together, and running in them.",
      ["World", "run"]),
@@ -731,6 +792,22 @@ def hover(word: str) -> str:
     if d:
         return json.dumps(d.to_json())
     return json.dumps({})
+
+
+def budget_metrics() -> str:
+    """
+    What a `budget` line may be written about, and what each one measures.
+
+    The editor offers these after `budget ` and explains one on hover. They
+    are the names the checker reads — `network`, not `network_msgs` — because
+    the name a student writes is the one that has to be right.
+    """
+    from .metrics import EXPLANATIONS
+    from .notation_mr import BUDGET_METRICS
+
+    return json.dumps({
+        name: (EXPLANATIONS.get(key, (human,))[0] or human)
+        for name, (key, human) in BUDGET_METRICS.items()})
 
 
 def reference() -> str:

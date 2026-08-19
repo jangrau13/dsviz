@@ -123,7 +123,32 @@ async function boot() {
   }
   await pyodide.runPythonAsync(
     `import sys; sys.path.insert(0, "/home/pyodide")\n` +
-    `from dsviz.langserver import analyse, analyse_project, completions, hover, reference`);
+    "from dsviz.langserver import (analyse, analyse_project, budget_metrics,\n" +
+    "                              completions, hover, reference)");
+
+  // The editor's words come from the same table the documentation site is
+  // generated from, so a keyword cannot be in one and missing from the
+  // other. Wired here rather than in lang.js because this is where Python
+  // is; lang.js keeps only the grammar's own keywords, which do not drift.
+  const pyCompletions = pyodide.globals.get("completions");
+  const pyHover = pyodide.globals.get("hover");
+  const byDialect = new Map();
+  let budgets = null;
+  useLanguageService({
+    // Filtered to the exercise, so a Spark task is not offered `emit`.
+    completions: () => {
+      const dialect = $("dialect").textContent || "";
+      if (!byDialect.has(dialect)) {
+        byDialect.set(dialect, JSON.parse(pyCompletions(dialect || null)));
+      }
+      return byDialect.get(dialect);
+    },
+    hover: (word) => JSON.parse(pyHover(word)),
+    budgets: () => {
+      if (!budgets) budgets = JSON.parse(pyodide.globals.get("budget_metrics")());
+      return budgets;
+    },
+  });
 
   await pyodide.runPythonAsync(
     "from dsviz.assignment import catalogue, judge_assignment, ASSIGNMENTS");
@@ -322,17 +347,26 @@ function commentRuns(model) {
   return runs;
 }
 
+/*
+ * Which runs actually fold, given where the cursor is.
+ *
+ * A comment must not disappear from under the student as they type it, so the
+ * run being edited stays. `at` is the line being edited and not merely the
+ * line the cursor rests on: an editor nobody is typing in has its cursor at
+ * line 1 by default, which is where a file's opening paragraph is, so the one
+ * block worth folding was the one block that never folded.
+ */
+function foldable(runs, at) {
+  return runs.filter(([a, b]) => at < a || at > b);
+}
+
 function applyComments() {
   const model = editor && editor.getModel();
   // Older Monaco builds have no way to hide lines; the button reports that by
   // not being there at all rather than by doing nothing when pressed.
   if (!model || typeof editor.setHiddenAreas !== "function") return;
-  // Never the line the cursor is on: a comment must not disappear from under
-  // the student as they type it.
-  const at = editor.getPosition()?.lineNumber ?? 0;
-  const runs = commentsHidden
-    ? commentRuns(model).filter(([a, b]) => at < a || at > b)
-    : [];
+  const at = editor.hasTextFocus() ? (editor.getPosition()?.lineNumber ?? 0) : 0;
+  const runs = commentsHidden ? foldable(commentRuns(model), at) : [];
   const key = runs.map((r) => r.join("-")).join(",");
   if (key === hiddenNow) return;
   hiddenNow = key;
@@ -751,6 +785,7 @@ function draw() {
   for (const s of frame.shapes)
     if (s.kind === "arrow") drawArrow(s);
     else if (s.kind === "marker") drawMarker(s);
+    else if (s.kind === "state") drawState(s);
     else if (s.kind === "chip") drawChip(s);
 
   $("clock").textContent = clock.toFixed(2) + "s";
@@ -885,6 +920,36 @@ function drawArrow(s) {
   }
 }
 
+/*
+ * What a machine remembers, on the floor of its own box.
+ *
+ * One line per field, in the same place all run, showing the value that holds
+ * at the moment the playhead is at: the shape's t_in is when the value was
+ * written and its t_out is when the next one replaced it, so exactly one
+ * reading per field is ever on screen. A pile of readings would say the
+ * machine holds five things when it holds one.
+ *
+ * The value is highlighted for a moment after it changes, because a number
+ * that quietly becomes a different number is the one thing an animation can
+ * show and a screenshot cannot.
+ */
+const STATE_FLASH = 0.6;      // seconds a fresh value stays highlighted
+
+function drawState(s) {
+  if (clock < s.t_in) return;
+  if (s.t_out != null && clock >= s.t_out) return;
+  const fresh = s.t_in > 0 && clock - s.t_in < STATE_FLASH;
+  const w = Math.max(s.w || 0.6, s.text.length * 0.098 + 0.16);
+  const h = s.h || 0.3;
+  const g = el("g", { class: "state" + (fresh ? " changed" : "") });
+  el("rect", { x: s.x - w / 2, y: sy(s.y) - h / 2, width: w, height: h,
+               rx: 0.05, fill: s.color, "fill-opacity": 0.15,
+               stroke: s.color, "stroke-width": fresh ? 0.035 : 0.02 }, g);
+  const t = el("text", { x: s.x, y: sy(s.y) + 0.055, "text-anchor": "middle",
+                         class: "state-label", fill: s.color }, g);
+  t.textContent = s.text;
+}
+
 /* The payload in flight: interpolated between source and target so the
  * student sees what is being transported, and when it lands. */
 const landed = new Map();      // node key -> how many chips rest there
@@ -982,7 +1047,7 @@ function videoType() {
 function svgStyles() {
   const root = getComputedStyle(document.documentElement);
   const value = (name) => root.getPropertyValue(name).trim();
-  const KEEP = /^(text|\.node-|\.lane-|\.chip|\.rpc|\.marker|\.note)/;
+  const KEEP = /^(text|\.node-|\.lane-|\.chip|\.rpc|\.marker|\.note|\.state)/;
   let out = `text { font-family: ${getComputedStyle(document.body).fontFamily};` +
             ` fill: ${value("--text") || "#e6e8ea"}; }\n`;
   for (const sheet of document.styleSheets) {
@@ -1528,25 +1593,41 @@ function setBriefFolded(folded) {
   b.classList.toggle("on", folded);
 }
 
-/* --- the results, given the whole panel ----------------------------------
+/* --- how the right-hand side is divided ----------------------------------
  *
- * A run that fails several cases has more to say than a strip at the bottom
- * of the panel can hold. Rather than shrink the verdict, the diagram steps
- * aside: the numbers and the failures get the height, and one press puts the
- * dataflow back.
+ * Three ways to look at a run, because the same screen is asked to do three
+ * different jobs.
+ *
+ *   "split"    the diagram with the results under it — writing and running
+ *   "results"  the numbers and the failed cases take the panel — reading why
+ *   "stage"    the dataflow over the whole window — teaching with it
+ *
+ * The first two are remembered: a student who works one way keeps working
+ * that way. The third is not. A maximised diagram is a moment in a lecture,
+ * and a page that reopened with no editor in it would be a page that looks
+ * broken.
  */
-let resultsFull = localStorage.getItem("dsviz.results") === "full";
+let view = localStorage.getItem("dsviz.view") === "results" ? "results" : "split";
 
-function setResultsFull(full) {
-  resultsFull = full;
-  localStorage.setItem("dsviz.results", full ? "full" : "auto");
-  document.querySelector(".view-pane").classList.toggle("results-full", full);
-  const b = $("expand");
-  b.textContent = full ? "diagram ⤡" : "results ⤢";
-  b.title = full ? "show the dataflow again" : "give the results the whole panel";
-  b.classList.toggle("on", full);
+function setView(next) {
+  view = next;
+  if (next !== "stage") localStorage.setItem("dsviz.view", next);
+  document.querySelector(".view-pane").classList.toggle("results-full", next === "results");
+  document.querySelector("main").classList.toggle("stage-full", next === "stage");
+
+  const results = $("expand"), stage = $("magnify");
+  results.textContent = next === "results" ? "results ⤡" : "results ⤢";
+  results.title = next === "results"
+    ? "put the dataflow back" : "give the results the whole panel";
+  results.classList.toggle("on", next === "results");
+  stage.textContent = next === "stage" ? "dataflow ⤡" : "dataflow ⤢";
+  stage.title = next === "stage"
+    ? "back to the code (escape does this too)"
+    : "the dataflow over the whole window";
+  stage.classList.toggle("on", next === "stage");
+
   // The frame is cut to the panel's shape, so a panel that has just changed
-  // shape has to be re-cut.
+  // shape has to be re-cut. Monaco lays itself out again on its own.
   if (frame && !playing) draw();
 }
 
@@ -1576,7 +1657,7 @@ function onReady(fn) {
 
 onReady(() => {
   applyTheme(currentTheme());
-  setResultsFull(resultsFull);
+  setView(view);
 
   /* The remaining one-gesture routes out of the page: the browser context
    * menu, and select-all outside the editor. Closing them means the cheapest
@@ -1597,7 +1678,7 @@ onReady(() => {
   $("examples").addEventListener("change", (e) => chooseItem(e.target.value));
   $("play").addEventListener("click", () => {
     // Playing a diagram that is folded away shows nothing; bring it back.
-    if (resultsFull) setResultsFull(false);
+    if (view === "results") setView("split");
     playing ? pause() : play(clock >= (frame?.duration ?? 0));
   });
   $("scrub").addEventListener("input", (e) => {
@@ -1607,11 +1688,14 @@ onReady(() => {
   });
   $("record").addEventListener("click", () => {
     // Recording frames a panel that has to be on screen to be framed.
-    if (resultsFull) setResultsFull(false);
+    if (view === "results") setView("split");
     recordVideo();
   });
   $("comments").addEventListener("click", () => setComments(!commentsHidden));
-  $("expand").addEventListener("click", () => setResultsFull(!resultsFull));
+  $("expand").addEventListener("click", () =>
+    setView(view === "results" ? "split" : "results"));
+  $("magnify").addEventListener("click", () =>
+    setView(view === "stage" ? "split" : "stage"));
   // The brief is redrawn on every task, so its button is caught on the way up
   // rather than bound to an element that is about to be replaced.
   $("brief").addEventListener("click", (e) => {
@@ -1672,6 +1756,9 @@ onReady(() => {
     if (e.key !== "Escape") return;
     setMenu(false);
     if (!$("palette").hidden) closePalette();
+    // The way out of a maximised diagram that does not need the button to be
+    // found first — which is the point of it on a projector.
+    if (view === "stage") setView("split");
   });
   $("setupToggle").addEventListener("click", () => {
     const b = $("setupBody");

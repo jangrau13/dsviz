@@ -194,6 +194,10 @@ FOR_RE = re.compile(
 LET_RE = re.compile(
     r"^(?P<var>\w+)\s*:\s*(?P<vtype>\[?\w+\]?)\s*=\s*(?P<value>.+)$")
 IF_RE = re.compile(r"^if\s+(?P<cond>.+?)\s*:\s*$")
+# `with parallel():` — a block header, not an expression. What it means
+# is a matter of timing, which is the simulator's to decide; here it is
+# only something that must not be mistaken for a value.
+WITH_RE = re.compile(r"^with\s+(?P<what>\w+)\s*\(\s*\)\s*:\s*$")
 EMIT_RE = re.compile(r"^emit\s*\(\s*(?P<key>.+?)\s*,\s*(?P<value>.+?)\s*\)\s*$")
 
 class TypeVar:
@@ -659,6 +663,14 @@ def check_functions(funcs: dict, mapper: str | None = None) -> list[Diagnostic]:
                 infer(m.group("cond"), scope, line, diags)
                 continue
 
+            if WITH_RE.match(text):
+                # The header itself has no value and introduces no name. The
+                # statements inside it are checked as any others are, on the
+                # lines they are written — being simultaneous does not change
+                # what a type is.
+                last_type = VType.VOID
+                continue
+
             m = RETURN_RE.match(text)
             if m:
                 got = infer(m.group("value"), scope, line, diags)
@@ -898,7 +910,8 @@ def bind_helpers(funcs: dict) -> None:
 
 
 def run_function(fn: Func, args: dict, budget: Budget,
-                 *, collect_emits: bool = False) -> Any:
+                 *, collect_emits: bool = False, state: dict | None = None
+                 ) -> Any:
     """
     Execute one student function.
 
@@ -907,10 +920,29 @@ def run_function(fn: Func, args: dict, budget: Budget,
     only the caller knows what position the function was passed in — this used
     to be decided by testing whether the function was *named* `map`, which
     stopped working the moment students chose their own names.
+
+    `state` is what the machine running this method remembers. A name it holds
+    reads as its current value and a binding to that name writes through to
+    it, so `total: int = total + n` updates the machine rather than a local
+    that is thrown away at the end of the call. That is the only difference
+    between a field and a local, and it is decided by the class declaration
+    rather than by anything written at the assignment — which is why the
+    checker refuses a parameter that shadows a field.
     """
     emitted: list[tuple] = []
     result = None
     env = dict(args)
+    held = state if state is not None else {}
+
+    def visible(env: dict) -> dict:
+        """Names as this line sees them: locals, plus whatever is remembered.
+
+        The machine's own dictionary is consulted rather than a copy taken at
+        the start, so a field written inside a loop reads back as the value it
+        was just given. Loops run over a copied scope, which is what made the
+        distinction matter.
+        """
+        return {**env, **held} if held else env
 
     def execute(body: list[tuple], env: dict):
         nonlocal result
@@ -921,15 +953,18 @@ def run_function(fn: Func, args: dict, budget: Budget,
 
             m = LET_RE.match(text)
             if m:
-                env[m.group("var")] = _eval_expr(
-                    m.group("value"), env, line, budget)
+                value = _eval_expr(m.group("value"), visible(env), line, budget)
+                if m.group("var") in held:
+                    held[m.group("var")] = value
+                else:
+                    env[m.group("var")] = value
                 i += 1
                 continue
 
             m = FOR_RE.match(text)
             if m:
                 block, i = _block(body, i, indent)
-                seq = _eval_expr(m.group("iter"), env, line, budget)
+                seq = _eval_expr(m.group("iter"), visible(env), line, budget)
                 for item in seq:
                     execute(block, {**env, m.group("var"): item})
                 continue
@@ -937,23 +972,32 @@ def run_function(fn: Func, args: dict, budget: Budget,
             m = IF_RE.match(text)
             if m:
                 block, i = _block(body, i, indent)
-                if _eval_expr(m.group("cond"), env, line, budget):
+                if _eval_expr(m.group("cond"), visible(env), line, budget):
                     execute(block, env)
+                continue
+
+            if WITH_RE.match(text):
+                # Evaluation computes values, and a block that runs its calls
+                # at the same time produces the same values as one that runs
+                # them one after another. Only the clock can tell them apart,
+                # so the header is stepped over and the body carries on here.
+                i += 1
                 continue
 
             m = RETURN_RE.match(text)
             if m:
-                result = _eval_expr(m.group("value"), env, line, budget)
+                result = _eval_expr(m.group("value"), visible(env), line, budget)
                 return
 
             m = EMIT_RE.match(text)
             if m:
-                emitted.append((_eval_expr(m.group("key"), env, line, budget),
-                                _eval_expr(m.group("value"), env, line, budget)))
+                emitted.append(
+                    (_eval_expr(m.group("key"), visible(env), line, budget),
+                     _eval_expr(m.group("value"), visible(env), line, budget)))
                 i += 1
                 continue
 
-            result = _eval_expr(text, env, line, budget)
+            result = _eval_expr(text, visible(env), line, budget)
             i += 1
 
     execute(fn.body, env)

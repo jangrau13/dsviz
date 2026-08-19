@@ -115,6 +115,58 @@ for name in ("fx-calls", "fx-ticks", "fx-stages"):
     ok(f"{name} produces a diagram", bool(payload.get("frame")),
        "no frame" if not payload.get("frame") else "")
 
+# --- the editor colours the language that exists ------------------------
+# The highlighter is the one part of the editor that cannot be generated from
+# the Python tables, because Monarch is a JavaScript object. So it is checked
+# instead: every word it paints must be one the grammar has, and every keyword
+# the grammar has must be painted. This drifted through a whole change of
+# notation once — the editor was still colouring `takes`, `calls` and
+# `service` long after the language became Python-shaped, while `def`,
+# `class` and `return` were left as plain identifiers.
+import re  # noqa: E402
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+LANG_JS = (ROOT / "web" / "lang.js").read_text()
+GRAMMAR = (ROOT / "dsviz" / "grammar.py").read_text()
+
+
+def js_list(name: str) -> set:
+    body = re.search(r"const " + name + r" = \[(.*?)\];", LANG_JS, re.S)
+    return set(re.findall(r'"([^"]+)"', body.group(1))) if body else set()
+
+
+painted = js_list("BLOCKS") | js_list("STATEMENTS") | js_list("TYPES")
+declared = set(re.findall(r"^KW_\w+\.\d+: /(\w+)\\b/", GRAMMAR, re.M))
+# `mappers|reducers|…` and `on|off` are alternations inside one token rather
+# than a token each, so they are read out of the alternation.
+for group in re.findall(r"^(?:CONFIG_KEY|ONOFF)\.\d+: /\(\?:([^)]*)\)", GRAMMAR, re.M):
+    declared |= set(group.split("|"))
+# Words the grammar spells out inside a rule rather than as a keyword token,
+# plus the type names and the word operators. Painting them is right; there is
+# no KW_ token for them to match.
+BY_HAND = {"parallel", "and", "or", "not", "mod",
+           "int", "string", "pair", "void"}
+# `split` is both an input declaration and a builtin function, and inside a
+# body it is the function a student means. It is left to the vocabulary, which
+# comes from the same table the reference does.
+UNPAINTED = {"split"}
+
+ok("the editor paints nothing the grammar does not have",
+   not (painted - declared - BY_HAND),
+   ", ".join(sorted(painted - declared - BY_HAND)))
+ok("the editor paints every keyword the grammar has",
+   not (declared - painted - UNPAINTED),
+   ", ".join(sorted(declared - painted - UNPAINTED)))
+ok("the grammar's keywords were actually found",
+   len(declared) > 10, f"{len(declared)} found")
+
+# Nothing from the notation this one replaced may survive in the editor. Each
+# of these was a completion that inserted syntax the parser refuses.
+GONE = {"service", "client", "calls", "takes", "crashes", "restarts"}
+left = GONE & set(re.findall(r'"([a-z_]+)"', LANG_JS))
+ok("no statement from the old notation is left in the editor",
+   not left, ", ".join(sorted(left)))
+
 print("ALL LANGUAGE-SERVER TESTS PASSED" if not failures
       else f"{len(failures)} FAILED: {', '.join(failures)}")
 sys.exit(1 if failures else 0)

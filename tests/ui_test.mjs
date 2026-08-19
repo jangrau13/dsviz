@@ -138,16 +138,30 @@ window.showBrief({ title: "Getting started 2", brief: "…", criteria: [] });
 ok("a new task keeps the fold", $("brief").classList.contains("collapsed"));
 click($("briefToggle"));
 
-const view = doc.querySelector(".view-pane");
-ok("the results start beside the diagram", !view.classList.contains("results-full"));
+const pane = doc.querySelector(".view-pane"), page = doc.querySelector("main");
+ok("the results start beside the diagram", !pane.classList.contains("results-full"));
 click($("expand"));
-ok("the results can take the whole panel", view.classList.contains("results-full"));
+ok("the results can take the whole panel", pane.classList.contains("results-full"));
 ok("the expanded panel is remembered",
-   window.localStorage.getItem("dsviz.results") === "full");
-ok("the button offers the diagram back", /diagram/i.test($("expand").textContent));
+   window.localStorage.getItem("dsviz.view") === "results");
+ok("the button offers the dataflow back", /⤡/.test($("expand").textContent));
 // Playing an animation that is not on screen shows nothing, so it comes back.
 click($("play"));
-ok("pressing play brings the diagram back", !view.classList.contains("results-full"));
+ok("pressing play brings the diagram back", !pane.classList.contains("results-full"));
+
+click($("magnify"));
+ok("the dataflow can take the whole window", page.classList.contains("stage-full"));
+ok("a maximised diagram hides the editor", !shown(doc.querySelector(".editor-pane")));
+/* Not remembered, unlike the other two: reopening into a page with no editor
+ * in it is a page that looks broken. */
+ok("a maximised diagram is not remembered",
+   window.localStorage.getItem("dsviz.view") === "split",
+   window.localStorage.getItem("dsviz.view"));
+doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+ok("escape brings the code back", !page.classList.contains("stage-full"));
+click($("magnify"));
+click($("magnify"));
+ok("the button is a way out as well as in", !page.classList.contains("stage-full"));
 
 const comments = $("comments");
 ok("the comments toggle exists", comments !== null);
@@ -180,6 +194,15 @@ ok("code with no comments folds nothing",
    runs("x = 1\n\ny = 2") === "[]", runs("x = 1\n\ny = 2"));
 ok("a comment after code on the same line is code",
    runs("x = 1  # why") === "[]", runs("x = 1  # why"));
+
+/* The run being typed in stays; every other one folds. An editor nobody is
+ * typing in reports line 0, because its cursor rests at line 1 by default —
+ * which is where a file's opening paragraph is, and folding everything except
+ * that paragraph leaves the one block worth folding on screen. */
+const fold = (at) => JSON.stringify(window.foldable([[1, 13], [15, 18]], at));
+ok("an untouched file folds every block", fold(0) === "[[1,13],[15,18]]", fold(0));
+ok("the block being typed in stays", fold(3) === "[[15,18]]", fold(3));
+ok("a cursor in code folds both blocks", fold(14) === "[[1,13],[15,18]]", fold(14));
 
 // --- every id the script reaches for must exist --------------------------
 // A renamed id is invisible until the control is pressed; this catches it at
@@ -238,6 +261,35 @@ const undef = [...new Set(bare)].filter(
 ok("every function the page calls is defined", undef.length === 0,
    undef.join(", "));
 
+// --- what a machine remembers -------------------------------------------
+/*
+ * State is drawn from the same Frame the video renders, so the only thing
+ * that can differ here is this page's own drawing of it. Two things have to
+ * hold: a value is on the diagram, and exactly one value per field is — the
+ * reading whose window the playhead is inside. A page that stacked every
+ * reading would say a machine holding one number is holding five.
+ */
+const badge = (over) => Object.assign(
+  { kind: "state", x: 0, y: 0, w: 1.2, h: 0.3, text: "seats = 3",
+    color: "#4CD4C4", t_in: 0, t_out: null, meta: { key: "gate.seats" } },
+  over);
+
+$("stage").innerHTML = "";
+window.drawState(badge({}));
+const drawn = $("stage").querySelectorAll("g.state");
+ok("a remembered value is drawn on the machine", drawn.length === 1,
+   `${drawn.length} drawn`);
+ok("and says what it holds",
+   (drawn[0]?.textContent ?? "").includes("seats = 3"), drawn[0]?.textContent);
+
+$("stage").innerHTML = "";
+window.drawState(badge({ text: "seats = 2", t_out: 0 }));   // already replaced
+window.drawState(badge({ text: "seats = 3" }));             // the current one
+const now = [...$("stage").querySelectorAll("g.state")].map((g) => g.textContent);
+ok("a value that has been superseded is not drawn as well",
+   now.length === 1 && now[0].includes("seats = 3"), now.join(" | "));
+$("stage").innerHTML = "";
+
 // --- the video export ----------------------------------------------------
 /*
  * MediaRecorder does not exist headless, so the encoding cannot be exercised
@@ -252,7 +304,8 @@ const standalone = window.stageSvgText(640, 360);
 ok("the recorded frame is a self-contained SVG",
    /<svg[^>]*xmlns=/.test(standalone) && /<style/.test(standalone));
 ok("the recorded frame carries the diagram's own text rules",
-   /\.node-label/.test(standalone) && /\.chip-label/.test(standalone));
+   /\.node-label/.test(standalone) && /\.chip-label/.test(standalone)
+   && /\.state-label/.test(standalone));
 ok("no var() survives into the recorded frame", !/var\(--/.test(standalone),
    "an unresolved custom property paints nothing outside the document");
 ok("recording without a run says so rather than throwing",

@@ -12,6 +12,7 @@ Nothing here knows about rendering. The output is a `Trace` of plain data.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -95,6 +96,23 @@ class Rpc:
                 f"{self.elapsed:.2f}s attempts={self.attempts}>")
 
 
+# How wide a remembered value is written on a diagram. A box is about two
+# characters wider than this at the size the renderers draw it, so anything
+# longer is cut rather than pushed through the side of the machine holding it.
+STATE_LABEL = 18
+
+
+def _short(value: Any) -> str:
+    """A remembered value, written short enough to fit inside a machine."""
+    if isinstance(value, float):
+        text = f"{value:g}"
+    elif isinstance(value, (list, tuple)):
+        text = "[" + ", ".join(str(v) for v in value) + "]"
+    else:
+        text = str(value)
+    return text if len(text) <= STATE_LABEL else text[:STATE_LABEL - 1] + "\u2026"
+
+
 # --- machines ----------------------------------------------------------
 
 class Machine:
@@ -115,6 +133,14 @@ class Machine:
     it is: `on_crash` is "stay_dead" or "restart", and a restarting machine is
     back `restart_after` seconds later, without what it was holding.
 
+    `state` is what it remembers between one piece of work and the next. A
+    machine without it answers the same thing however often it is asked, which
+    is a function with a network in front of it rather than a machine; with
+    it, the second call can see what the first one did. It is also what a
+    crash destroys — that is why `crash` puts every field back where it
+    started — so the cost of losing a machine is visible on the diagram
+    instead of being something a student is told about.
+
     Each machine owns a SimPy `Store` as its inbox, so message delivery is
     SimPy's job rather than ours.
     """
@@ -122,7 +148,8 @@ class Machine:
     def __init__(self, cluster: Cluster, name: str, *, speed: float = 1.0,
                  capacity: int | None = None, role: str | None = None,
                  error_rate: float = 0.0, on_crash: str = "stay_dead",
-                 restart_after: float = 1.0, **props):
+                 restart_after: float = 1.0, state: dict | None = None,
+                 **props):
         self.cluster = cluster
         self.name = name
         self.speed = speed
@@ -141,7 +168,18 @@ class Machine:
         self.props = props
 
         self.clock = 0.0        # this machine's local time
+        # Set while this machine is inside a `parallel` block: the time every
+        # call in the block leaves at, and the times their replies came back.
+        # The block ends at the last of them, so the caller waits for all.
+        self.fork_at: float | None = None
+        self.fork_done: list[float] = []
         self.items: list = []   # what it currently holds
+        # What it remembers, and what it goes back to remembering after a
+        # crash. The starting values are kept rather than recomputed: coming
+        # back is coming back as this machine was declared, not as it was a
+        # moment before it broke.
+        self.state: dict = dict(state or {})
+        self.initial_state: dict = dict(state or {})
         self.alive = True
         self.inbox = simpy.Store(cluster.env)
         self.services: dict[str, float] = {}   # method -> service time
@@ -152,7 +190,14 @@ class Machine:
 
         cluster._emit(0.0, "spawn", name,
                       speed=speed, capacity=capacity, role=role,
-                      error_rate=error_rate, on_crash=on_crash, **props)
+                      error_rate=error_rate, on_crash=on_crash,
+                      state=list(self.state), **props)
+        # Said out loud at the start, so what a machine remembers is on the
+        # diagram before anything has happened to it. A value that only
+        # appears once it changes cannot be read as a change.
+        for field_, value in self.state.items():
+            cluster._emit(0.0, "state", name, field=field_, value=value,
+                          text=f"{field_} = {_short(value)}", reason="start")
 
     # -- local work ----------------------------------------------------
     def work(self, label: str, duration: float = 1.0) -> Machine:
@@ -193,6 +238,44 @@ class Machine:
     @property
     def is_overloaded(self) -> bool:
         return self.capacity is not None and len(self.items) > self.capacity
+
+    # -- memory --------------------------------------------------------
+    def remember(self, field: str, value: Any, *, reason: str = "") -> Machine:
+        """
+        Change what this machine remembers, and say so on the diagram.
+
+        Every change is an event, not merely a new number in a dictionary.
+        That is what lets the picture show the value moving — and, when the
+        machine breaks, show it dropping back to where it started, which is
+        the whole cost of losing a machine that was holding something.
+        """
+        self._require_alive()
+        self.state[field] = value
+        self.cluster._emit(self.clock, "state", self.name,
+                           field=field, value=value,
+                           text=f"{field} = {_short(value)}",
+                           reason=reason or "updated")
+        return self
+
+    def recall(self, field: str, default: Any = None) -> Any:
+        """What it remembers under this name, or `default` if it holds none."""
+        return self.state.get(field, default)
+
+    def forget(self, *, at: float | None = None, reason: str = "crash") -> None:
+        """
+        Put every field back where it started.
+
+        A machine comes back as it was declared, not as it was a moment before
+        it broke. Anything it had worked out since is gone, which is exactly
+        what a student has to be able to see.
+        """
+        t = self.clock if at is None else at
+        for field, value in self.initial_state.items():
+            if self.state.get(field) == value:
+                continue
+            self.state[field] = value
+            self.cluster._emit(t, "state", self.name, field=field, value=value,
+                               text=f"{field} = {_short(value)}", reason=reason)
 
     # -- communication -------------------------------------------------
     def send(self, target: Machine, payload: Any, *, latency: float = 0.5) -> Machine:
@@ -262,9 +345,13 @@ class Machine:
         """
         self._require_alive()
         attempts = 0
+        # Inside a `parallel` block every call leaves at the moment the block
+        # began, rather than at whatever time the one before it came back.
+        # That is the whole of what the block changes on this side of the wire.
+        now = self.clock if self.fork_at is None else self.fork_at
         while True:
             attempts += 1
-            started = self.clock
+            started = now
             rpc = self._attempt(target, method, payload, latency, deadline, started)
             if rpc.ok or attempts > retries:
                 rpc.attempts = attempts
@@ -275,13 +362,53 @@ class Machine:
                                    status=rpc.status, attempts=attempts,
                                    started=started, payload=payload,
                                    reply=rpc.reply)
-                self.clock = rpc.done_at
+                self._returned(rpc.done_at)
                 return rpc
             # Failed but retries remain: back off and try again.
-            self.clock = rpc.done_at + latency
-            self.cluster._emit(self.clock, "retry", self.name,
+            now = rpc.done_at + latency
+            self.cluster._emit(now, "retry", self.name,
                                to=target.name, method=method,
                                attempt=attempts, reason=rpc.status)
+
+    def _returned(self, t: float) -> None:
+        """Where this machine stands once a call it made has come back."""
+        if self.fork_at is None:
+            self.clock = t
+            return
+        # In a parallel block it is not standing at this reply: it is waiting
+        # for all of them, and the block ends at the last one.
+        self.fork_done.append(t)
+
+    @contextmanager
+    def parallel(self):
+        """
+        Every call made in this block leaves at once; the block ends when the
+        last reply is back.
+
+        Ordinary calls are sequential because each one moves this machine's
+        clock past the round trip, so the next leaves from where the last
+        finished. Here the clock is pinned to the moment the block began and
+        the finishing times are collected instead, which is a fork and a join
+        written as a block: three machines asked at the same time cost one
+        round trip, not three.
+
+        What it does *not* change is the far end. A machine still answers one
+        request at a time (see `_attempt`), so fanning out to one machine three
+        times queues, and fanning out to three machines does not. That contrast
+        is the reason to have the construct at all.
+        """
+        if self.fork_at is not None:
+            raise RuntimeError(f"{self.name} is already in a parallel block")
+        self.fork_at = self.clock
+        self.fork_done = []
+        try:
+            yield self
+        finally:
+            # A block that called nothing took no time, which is why the start
+            # is in the running.
+            done = max([self.fork_at] + self.fork_done)
+            self.fork_at, self.fork_done = None, []
+            self.clock = done
 
     def breaks_now(self) -> bool:
         """
@@ -327,8 +454,16 @@ class Machine:
             return Rpc(method, target.name, "unavailable",
                        started, started + latency)
 
+        arrive = started + latency
+        # A machine answers one request at a time. If it is still busy with
+        # somebody else's when this one lands, this one starts when it is free
+        # — so a queue forms, and the wait is charged to the caller like any
+        # other. Reading the far end's clock is what makes that true: without
+        # it, two callers could each be told they were served immediately and
+        # the picture would contradict itself the moment anything overlapped.
+        begin = max(target.clock, arrive)
         service_time = target.services[method] / target.speed
-        done = started + latency + service_time + latency      # there, work, back
+        done = begin + service_time + latency      # queue, work, back
 
         if deadline is not None and (done - started) > deadline:
             # The server may still be working, but the caller has given up.
@@ -338,8 +473,8 @@ class Machine:
         self.cluster._emit(started, "send", self.name,
                            to=target.name, payload=payload if payload is not None
                            else f"{method}()",
-                           arrive=started + latency)
-        target.clock = max(target.clock, started + latency)
+                           arrive=arrive, queued=begin - arrive)
+        target.clock = begin
         target.work(f"{method}()", duration=target.services[method])
 
         # The body runs only once the call has survived every failure check
@@ -369,10 +504,17 @@ class Machine:
         # back yet — it is back later, and the gap is the part worth seeing.
         self.down_until = t + self.restart_after if self.on_crash == "restart" else None
         lost = list(self.items) if lose_state else []
+        forgotten = {f: v for f, v in self.state.items()
+                     if v != self.initial_state.get(f)} if lose_state else {}
         if lose_state:
             self.items.clear()
         self.cluster._emit(t, "crash", self.name, lost=lost,
+                           forgot=list(forgotten),
                            on_crash=self.on_crash, back_at=self.down_until)
+        # After the crash event, so the diagram reads in the order it
+        # happened: the machine breaks, and then what it knew is gone.
+        if lose_state:
+            self.forget(at=t)
         return self
 
     def restart(self, *, at: float | None = None) -> Machine:

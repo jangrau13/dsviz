@@ -21,6 +21,12 @@ from .values import default_visual
 PALETTE = ["#4C9BE8", "#E8B44C", "#63C77A", "#D96A9E", "#9B7BE8",
            "#4CD4C4", "#E87A4C", "#B4E84C"]
 
+# What a machine remembers is drawn in one colour whatever it holds, so it
+# reads as a property of the machine rather than as another piece of data
+# passing through. A value lost to a crash is drawn in the failure colour,
+# because losing it is the failure, not a side effect of one.
+STATE_COLOR = "#4CD4C4"
+
 # RPC outcomes get their own colours: a failure must not look like a success.
 STATUS_COLORS = {
     "ok": "#63C77A",
@@ -51,7 +57,7 @@ def color_for(token) -> str:
 
 @dataclass
 class Shape:
-    kind: str                       # box | chip | arrow | lane | label | marker
+    kind: str                # box | chip | state | arrow | lane | label | marker
     x: float = 0.0
     y: float = 0.0
     w: float = 0.0
@@ -97,7 +103,12 @@ CHIP_H = 0.30
 CHIP_GAP = 0.04
 
 
-def box_height(most_held: int) -> float:
+def state_strip(rows: int) -> float:
+    """How much of a box's height its remembered values take up."""
+    return rows * (CHIP_H + CHIP_GAP) + (CHIP_GAP if rows else 0.0)
+
+
+def box_height(most_held: int, state_rows: int = 0) -> float:
     """
     How tall a machine's box has to be to hold what it holds.
 
@@ -105,10 +116,17 @@ def box_height(most_held: int) -> float:
     top 0.72 of a 1.5-unit box, leaving less room for six items than six items
     need. The box grows instead, so the contents are laid out at a readable
     spacing rather than crushed into whatever was left over.
+
+    What a machine remembers is drawn in a strip along the bottom, one line per
+    field, and the box grows for that too. The strip is at the bottom on
+    purpose: what moves through a machine arrives and leaves, and what it
+    remembers stays, so the two must not share a column or a value would look
+    like one more item passing through.
     """
+    floor = state_strip(state_rows)
     if most_held <= 0:
-        return BOX_H
-    needed = LABEL_STRIP + most_held * (CHIP_H + CHIP_GAP) + CHIP_GAP
+        return max(BOX_H, LABEL_STRIP + floor + CHIP_GAP)
+    needed = (LABEL_STRIP + most_held * (CHIP_H + CHIP_GAP) + CHIP_GAP + floor)
     return max(BOX_H, needed)
 
 
@@ -159,20 +177,34 @@ def edge_points(a, b, *, box_a, box_b, offset: float = 0.0):
     return x1, y1, x2, y2
 
 
-def held_positions(py: float, count: int, *, box_h: float = BOX_H) -> list[float]:
+def state_positions(py: float, rows: int, *, box_h: float = BOX_H) -> list[float]:
+    """
+    Where a machine's remembered values sit: a strip along the bottom.
+
+    One line per field, in the order the machine declared them, resting on the
+    floor of the box. They stay put for the whole run — only their text
+    changes — which is what makes an update read as the same value moving
+    rather than as another thing arriving.
+    """
+    floor = py - box_h / 2 + CHIP_GAP + CHIP_H / 2
+    return [floor + (rows - 1 - i) * (CHIP_H + CHIP_GAP) for i in range(rows)]
+
+
+def held_positions(py: float, count: int, *, box_h: float = BOX_H,
+                   state_rows: int = 0) -> list[float]:
     """
     Where a machine's held items sit, top to bottom, inside its own box.
 
-    Returns one y per item, all within the box's interior and below the label
-    strip. If the box is too small for the count at full spacing — which
-    `box_height` exists to prevent — the spacing tightens rather than the
-    column growing, because a diagram that overflows is worse than one that is
-    merely dense.
+    Returns one y per item, all within the box's interior, below the label
+    strip and above whatever the machine remembers. If the box is too small
+    for the count at full spacing — which `box_height` exists to prevent — the
+    spacing tightens rather than the column growing, because a diagram that
+    overflows is worse than one that is merely dense.
     """
     if count <= 0:
         return []
     top = py + box_h / 2 - LABEL_STRIP - CHIP_H / 2
-    bottom = py - box_h / 2 + CHIP_H / 2
+    bottom = py - box_h / 2 + CHIP_H / 2 + state_strip(state_rows)
     room = top - bottom
     step = CHIP_H + CHIP_GAP
     if count > 1 and (count - 1) * step > room:
@@ -305,6 +337,21 @@ def spacetime(trace: Trace, *, title: str = "", lane_gap: float = 1.6,
                                 text=str(e.detail["clock"]),
                                 color=color_for(e.machine), t_in=e.t,
                                 meta={"label": e.detail.get("label", "")}))
+        elif e.kind == "state":
+            # Below the lane rather than on it: a process's clock and what it
+            # remembers are two different things, and stacking them at the
+            # same height would read as one stamp with two halves.
+            shapes.append(Shape("state", x=x(e.t), y=y - 0.28, h=CHIP_H,
+                                w=max(len(e.detail.get("text", "")) * 0.11,
+                                      0.5),
+                                text=e.detail.get("text", ""),
+                                color=STATUS_COLORS["unavailable"]
+                                if e.detail.get("reason") == "crash"
+                                else STATE_COLOR,
+                                t_in=e.t,
+                                meta={"machine": e.machine,
+                                      "field": e.detail.get("field"),
+                                      "value": e.detail.get("value")}))
         elif e.kind == "crash":
             shapes.append(Shape("marker", x=x(e.t), y=y, text="✕",
                                 color="#E05252", t_in=e.t))
@@ -350,8 +397,26 @@ def dataflow(trace: Trace, *, title: str = "", col_gap: float = 3.2,
     def capacity(name: str) -> int:
         return max(most_held.get(name, 0), min(receives.get(name, 0), 6))
 
-    tallest = box_height(max((capacity(n) for n in
-                              set(most_held) | set(receives)), default=0))
+    # What each machine remembers, in the order it declared it. The fields are
+    # fixed for the whole run — only their values move — so the strip they are
+    # drawn in is measured once, here, and the box is built tall enough for it.
+    fields: dict[str, list] = {}
+    for e in spawns:
+        fields[e.machine] = list(e.detail.get("state") or [])
+    for e in trace.of_kind("state"):
+        row = fields.setdefault(e.machine, [])
+        if e.detail.get("field") not in row:
+            row.append(e.detail.get("field"))
+
+    def rows_of(name: str) -> int:
+        return len(fields.get(name, ()))
+
+    def height_of(name: str) -> float:
+        return box_height(capacity(name), rows_of(name))
+
+    tallest = max((height_of(n) for n in
+                   set(most_held) | set(receives) | set(fields)),
+                  default=BOX_H)
     row_gap = max(row_gap, tallest + 0.9)
 
     pos: dict[str, tuple[float, float]] = {}
@@ -376,7 +441,7 @@ def dataflow(trace: Trace, *, title: str = "", col_gap: float = 3.2,
                 spawn = next(e for e in spawns if e.machine == name)
                 slow = (spawn.detail.get("speed") or 1.0) < 1.0
                 box_w = min(2.6, gap * 0.85)
-                box_h = box_height(capacity(name))
+                box_h = height_of(name)
                 size[name] = (box_w, box_h)
                 shapes.append(Shape("box", x=px, y=py, w=box_w, h=box_h,
                                     text=name,
@@ -402,12 +467,14 @@ def dataflow(trace: Trace, *, title: str = "", col_gap: float = 3.2,
                                       # far apart the rest may be stacked.
                                       "land_top": held_positions(
                                           ty, 1,
-                                          box_h=box_height(
-                                              capacity(e.detail["to"])))[0],
+                                          box_h=height_of(e.detail["to"]),
+                                          state_rows=rows_of(
+                                              e.detail["to"]))[0],
                                       "land_step": CHIP_H + CHIP_GAP,
-                                      "land_room": box_height(
-                                          capacity(e.detail["to"]))
-                                      - LABEL_STRIP - CHIP_H}))
+                                      "land_room": height_of(e.detail["to"])
+                                      - LABEL_STRIP - CHIP_H
+                                      - state_strip(
+                                          rows_of(e.detail["to"]))}))
         elif e.kind == "rpc":
             # A call is a round trip, so it is two arrows: the request out and
             # the answer back. One line drawn centre-to-centre could show
@@ -416,8 +483,8 @@ def dataflow(trace: Trace, *, title: str = "", col_gap: float = 3.2,
             # like one that arrived.
             frm, to = e.machine, e.detail["to"]
             a, b = pos.get(frm, (0, 0)), pos.get(to, (0, 0))
-            box_a = size.get(frm, (2.6, box_height(capacity(frm))))
-            box_b = size.get(to, (2.6, box_height(capacity(to))))
+            box_a = size.get(frm, (2.6, height_of(frm)))
+            box_b = size.get(to, (2.6, height_of(to)))
             status = e.detail.get("status", "ok")
             method = e.detail["method"]
             started = e.detail.get("started", e.t)
@@ -457,8 +524,8 @@ def dataflow(trace: Trace, *, title: str = "", col_gap: float = 3.2,
         elif e.kind == "hold":
             px, py = pos.get(e.machine, (0, 0))
             items = e.detail.get("items", [])[:6]
-            ys = held_positions(py, len(items),
-                                box_h=box_height(capacity(e.machine)))
+            ys = held_positions(py, len(items), box_h=height_of(e.machine),
+                                state_rows=rows_of(e.machine))
             for i, item in enumerate(items):
                 vis = default_visual(item)
                 shapes.append(Shape("chip", x=px, y=ys[i], h=CHIP_H,
@@ -470,7 +537,7 @@ def dataflow(trace: Trace, *, title: str = "", col_gap: float = 3.2,
         elif e.kind == "input":
             px, py = pos.get(e.machine, (0, 0))
             vis = default_visual(e.detail.get("value"))
-            top = box_height(capacity(e.machine)) / 2
+            top = height_of(e.machine) / 2
             shapes.append(Shape("chip", x=px, y=py + top + CHIP_H,
                                 h=CHIP_H, text=vis.text,
                                 color=color_for(vis.color_key or vis.text),
@@ -482,6 +549,34 @@ def dataflow(trace: Trace, *, title: str = "", col_gap: float = 3.2,
             shapes.append(Shape("chip", x=px, y=py - 1.2,
                                 text=f"({e.detail['key']}, {e.detail['value']})",
                                 color=color_for(e.detail["key"]), t_in=e.t))
+        elif e.kind == "state":
+            # One line per field, in a strip along the bottom of the box, in
+            # the same place for the whole run. A change replaces the value
+            # standing there rather than adding another line, which is what
+            # `t_out` says: this reading holds until the next one.
+            px, py = pos.get(e.machine, (0, 0))
+            row = fields.get(e.machine, [])
+            field_ = e.detail.get("field")
+            if field_ not in row:
+                continue
+            ys = state_positions(py, len(row), box_h=height_of(e.machine))
+            later = [o.t for o in trace.of_kind("state")
+                     if o.machine == e.machine
+                     and o.detail.get("field") == field_ and o.t > e.t]
+            lost = e.detail.get("reason") == "crash"
+            shapes.append(Shape(
+                "state", x=px, y=ys[row.index(field_)],
+                w=max(size.get(e.machine, (2.6, 0))[0] - 0.24, 0.4), h=CHIP_H,
+                text=e.detail.get("text", ""),
+                color=STATUS_COLORS["unavailable"] if lost else STATE_COLOR,
+                t_in=e.t, t_out=min(later) if later else None,
+                meta={"machine": e.machine, "field": field_,
+                      "value": e.detail.get("value"),
+                      "reason": e.detail.get("reason", ""),
+                      # What the renderers key a replacement on: the same
+                      # field of the same machine is the same badge, moved to
+                      # a new value rather than a second badge drawn over it.
+                      "key": f"{e.machine}.{field_}"}))
         elif e.kind == "crash":
             px, py = pos.get(e.machine, (0, 0))
             shapes.append(Shape("marker", x=px, y=py, text="✕",

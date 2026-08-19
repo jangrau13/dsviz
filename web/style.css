@@ -97,12 +97,20 @@ main {
   min-height: 0;
 }
 
-/* The results, given the whole panel. For a run with many failed cases, or a
-   projector at the back of the room: the diagram steps aside rather than the
-   verdict scrolling. */
+/* The results, given the whole panel. For a run with many failed cases: the
+   diagram steps aside rather than the verdict scrolling. */
 .view-pane.results-full { grid-template-rows: auto 0 minmax(0, 1fr); }
 .view-pane.results-full #stage { display: none; }
-.view-pane.results-full .results { max-height: none; }
+.view-pane.results-full .results { max-height: none; min-height: 0; }
+
+/* The dataflow, over the whole window. For the projector at the back of the
+   room, and for a diagram with more machines in it than half a screen can
+   hold: the code and the numbers both stand down, and escape brings them
+   back. This one is deliberately not remembered — a maximised diagram is a
+   moment in a lecture, not a preference to be reopened into. */
+main.stage-full { grid-template-columns: 1fr; }
+main.stage-full .editor-pane { display: none; }
+main.stage-full .results { display: none; }
 
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .editor-pane { border-right: 1px solid var(--line); }
@@ -128,7 +136,12 @@ button:hover, select:hover { border-color: var(--accent); }
   padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--line);
   background: var(--panel); flex: 0 0 auto;
   /* Long tasks must not push the editor off the screen even when open. */
-  max-height: 40vh; overflow-y: auto;
+  max-height: 55vh;
+  /* A floor, once there is something to read. Sized to what the panel is
+     always asked to hold — a verdict, the cases that failed under it, and a
+     full row of metric tiles — so it is not a strip that scrolls the moment a
+     run has anything to say. Empty, it takes no room at all: before the first
+     run there is nothing down there to give space to. */ overflow-y: auto;
 }
 /* Folded, the task keeps its title: a student who has read the brief still
    needs to see which task they are looking at. Everything under the title is
@@ -170,6 +183,12 @@ button:hover, select:hover { border-color: var(--accent); }
 .lane-label { font-size: 0.19px; }
 .chip-label { font-size: 0.15px; font-family: ui-monospace, Menlo, monospace; }
 .rpc-label  { font-size: 0.145px; font-family: ui-monospace, Menlo, monospace; }
+/* What a machine remembers, on the floor of its box. Monospaced like a chip
+   so a number reads as a value, and one weight heavier so it stands out from
+   the data passing through above it. */
+.state-label { font-size: 0.155px; font-weight: 600;
+               font-family: ui-monospace, Menlo, monospace; }
+.state.changed rect { fill-opacity: 0.32; }
 .marker     { font-size: 0.26px; }
 .note       { font-size: 0.19px; fill: var(--muted); }
 .chip.landed { opacity: 0.9; }
@@ -188,12 +207,18 @@ button:hover, select:hover { border-color: var(--accent); }
      against a grid row that is itself sized by this box, which browsers
      resolve differently and which is how a one-line verdict came to be shown
      as half a line. `vh` is definite whatever the row does. */
-  max-height: 40vh;
+  max-height: 55vh;
+  /* A floor, once there is something to read. Sized to what the panel is
+     always asked to hold — a verdict, the cases that failed under it, and a
+     full row of metric tiles — so it is not a strip that scrolls the moment a
+     run has anything to say. Empty, it takes no room at all: before the first
+     run there is nothing down there to give space to. */
   /* One scroller for the whole panel. Two nested ones — a capped verdict
      inside a capped results box — meant the verdict could be cut in half with
      no scrollbar of its own to reach the rest of it. */
   overflow-y: auto; overscroll-behavior: contain;
 }
+.results:has(.metric-row) { min-height: 9.5rem; }
 .verdict {
   /* Pinned, not fixed in place by a max-height: it stays at the top of the
      panel however far the numbers below it are scrolled. */

@@ -47,7 +47,10 @@ decorator: "@" NAME ["(" [dec_args] ")"] _NL+
 class_def: KW_CLASS NAME ":" _NL+ _INDENT (member | _NL)+ _DEDENT
 // A machine that only carries settings — a mapper with a speed, say — has no
 // methods of its own, and `pass` is how Python says that.
-?member: decorated | func_def | pass_stmt
+// A class body holds methods and, in `balance: int = 0`, the state the
+// machine remembers between calls. A field is written exactly as a local
+// binding is, because it is the same thing said about a longer-lived name.
+?member: decorated | func_def | pass_stmt | let_stmt
 pass_stmt: KW_PASS _NL
 // `@duration(0.4)` passes a value, `@machine(speed=0.5)` names one. Both read as
 // Python, so both are allowed wherever a decorator takes arguments.
@@ -83,11 +86,17 @@ func_def: KW_DEF NAME "(" [params] ")" "->" TYPE ":" _NL+ _INDENT (stmt | _NL)+ 
 params: param ("," param)*
 param: NAME ":" TYPE
 TYPE.7: /(?:int|string|\[int\]|\[string\]|\[pair\]|pair|void)/
-?stmt: for_stmt | if_stmt | emit_stmt | let_stmt | return_stmt | expr_stmt
+?stmt: for_stmt | if_stmt | with_stmt | emit_stmt | let_stmt | return_stmt | expr_stmt
 return_stmt: KW_RETURN expr _NL
 let_stmt: NAME ":" TYPE "=" expr _NL
 for_stmt: KW_FOR NAME ":" TYPE KW_IN expr ":" _NL+ _INDENT (stmt | _NL)+ _DEDENT
 if_stmt: KW_IF expr ":" _NL+ _INDENT (stmt | _NL)+ _DEDENT
+// `with parallel():` — the calls in the block leave together and the
+// block ends when the last reply is back. The name is a NAME rather
+// than a keyword so that `with anything():` parses and the checker can
+// say which context managers exist, instead of the parser saying only
+// that the line is wrong.
+with_stmt: KW_WITH NAME "(" [args] ")" ":" _NL+ _INDENT (stmt | _NL)+ _DEDENT
 emit_stmt: KW_EMIT "(" expr "," expr ")" _NL
 expr_stmt: expr _NL
 
@@ -148,6 +157,7 @@ KW_CLOCK.6: /clock\b/
 KW_FOR.6: /for\b/
 KW_IN.6: /in\b/
 KW_IF.6: /if\b/
+KW_WITH.6: /with\b/
 KW_EMIT.6: /emit\b/
 KW_PROCESS.6: /process\b/
 KW_EVENT.6: /event\b/

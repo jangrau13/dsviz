@@ -232,6 +232,19 @@ button:hover, select:hover { border-color: var(--accent); }
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
   padding: 0.3rem 0.5rem; min-width: 84px;
 }
+/* A tile whose number moved, for as long as it takes to notice and no longer.
+   Colour rather than motion, so a row of them settling is not a flicker. */
+@keyframes metric-moved {
+  from {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+  }
+  to { border-color: var(--line); background: var(--panel); }
+}
+.metric.changed { animation: metric-moved 1.4s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .metric.changed { animation: none; border-color: var(--accent); }
+}
 .mname { font-size: 0.63rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
 .mvalue { font-family: ui-monospace, Menlo, monospace; font-size: 0.9rem; }
 .mvalue .unit { font-size: 0.62rem; color: var(--muted); margin-left: 0.12rem; }

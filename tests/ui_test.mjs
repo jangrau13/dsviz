@@ -204,6 +204,37 @@ ok("an untouched file folds every block", fold(0) === "[[1,13],[15,18]]", fold(0
 ok("the block being typed in stays", fold(3) === "[[15,18]]", fold(3));
 ok("a cursor in code folds both blocks", fold(14) === "[[1,13],[15,18]]", fold(14));
 
+// --- what moved since the last check -------------------------------------
+/*
+ * The results are rebuilt on a timer while a student types, so an unchanged
+ * number and a panel that never refreshed look alike. Only the tiles whose
+ * value actually moved are marked, and only against the previous check of the
+ * same program.
+ */
+const tiles = () => [...doc.querySelectorAll(".metric")].map(
+  (el) => [el.querySelector(".mname").textContent, el.classList.contains("changed")]);
+const metrics = (makespan) => [
+  { name: "makespan", value: makespan, unit: "s" },
+  { name: "network_msgs", value: 4, unit: "msgs" },
+];
+window.showMetrics(metrics(0.9), null, null);
+ok("a first run marks nothing as moved",
+   tiles().every(([, moved]) => !moved), JSON.stringify(tiles()));
+window.showMetrics(metrics(1.8), null, null);
+ok("the number that moved is marked",
+   tiles().find(([n]) => n === "makespan")[1], JSON.stringify(tiles()));
+ok("the number that stayed put is not",
+   !tiles().find(([n]) => n === "network_msgs")[1], JSON.stringify(tiles()));
+window.showMetrics(metrics(1.8), null, null);
+ok("a check that changes nothing marks nothing",
+   tiles().every(([, moved]) => !moved), JSON.stringify(tiles()));
+// A different task is a different set of numbers, not a change in these ones.
+// (chooseItem calls this, then reopens the files, which needs Monaco.)
+window.forgetMetrics();
+window.showMetrics(metrics(0.4), null, null);
+ok("switching tasks does not light the whole row",
+   tiles().every(([, moved]) => !moved), JSON.stringify(tiles()));
+
 // --- every id the script reaches for must exist --------------------------
 // A renamed id is invisible until the control is pressed; this catches it at
 // the point the rename happens instead.

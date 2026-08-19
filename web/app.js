@@ -593,14 +593,22 @@ async function run() {
   frame = result.frame;
   showMetrics(result.metrics, result.verdict, result.outputs);
 
-  // The finished run, drawn still. This used to animate itself on every
-  // check, which is every 300ms while a student is typing — so the diagram
-  // was permanently in motion, restarting from empty each time, and the one
-  // moment worth looking at went past while they were still mid-line.
-  // Parking at the end shows what happened; the play button replays it, and
-  // already knows to start over when the clock is at the end.
+  /*
+   * The run, drawn still and waiting at its first frame.
+   *
+   * Nothing animates on its own. The check runs every 300ms while a student
+   * is typing, and a diagram that played itself each time was permanently in
+   * motion — restarting from empty, with the one moment worth looking at
+   * going past while they were still mid-line.
+   *
+   * It parked at the end for a while instead, which had the same fault from
+   * the other side: the animation was always already over, and pressing play
+   * meant watching it rewind first. The playhead now sits at zero and stays
+   * there until it is asked to move. Editing changes the numbers underneath;
+   * watching the dataflow is a thing the student chooses to do.
+   */
   pause();
-  clock = frame.duration + 0.8;
+  clock = 0;
   draw();
 }
 
@@ -694,12 +702,37 @@ function revealProblem(line) {
   editor.focus();
 }
 
+/*
+ * What moved since the last check.
+ *
+ * The panel is rebuilt every 300ms while a student types, silently, so a
+ * number that did not change and a panel that did not refresh look exactly
+ * alike — which is how a run that had picked up an edit was read as one that
+ * had ignored it. A tile whose value differs from the previous check lights up
+ * for a moment. Nothing announces the ones that stayed put: that a metric did
+ * not move is often the lesson, and it is legible precisely because its
+ * neighbours did.
+ *
+ * Only against the previous check of the same program. A first run has
+ * nothing to differ from, and a different task is a different set of numbers
+ * rather than a change in these ones.
+ */
+let lastValues = {};
+
+/** A different program's numbers are not these ones, moved. */
+function forgetMetrics() { lastValues = {}; }
+
 function showMetrics(metrics, verdict, outputs) {
-  const cards = (metrics || []).map((m, i) => `
-    <div class="metric" data-metric="${i}" tabindex="0">
+  const cards = (metrics || []).map((m, i) => {
+    const before = lastValues[m.name];
+    const moved = before !== undefined && before !== m.value;
+    return `
+    <div class="metric${moved ? " changed" : ""}" data-metric="${i}" tabindex="0">
       <div class="mname">${m.name}</div>
       <div class="mvalue">${m.value}<span class="unit">${m.unit}</span></div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
+  lastValues = Object.fromEntries((metrics || []).map((m) => [m.name, m.value]));
   metricInfo = metrics || [];
 
   let v = "";
@@ -1518,6 +1551,7 @@ function loadCatalogue() {
 
 function chooseItem(value) {
   const [kind, name] = value.split(":");
+  forgetMetrics();
   if (kind === "assignment") {
     currentAssignment = assignments.find((a) => a.name === name) || null;
     showBrief(currentAssignment);

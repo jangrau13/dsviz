@@ -12,7 +12,7 @@ Upgrading an exercise is `uv lock --upgrade-package dsviz`; there is nothing to
 copy and so nothing to fall behind.
 
     dsviz serve [port]     the editor, on the current directory
-    dsviz grade            score what is in solutions/
+    dsviz grade            score what is in result/
     dsviz tasks            list the tasks this version ships
 """
 
@@ -33,6 +33,20 @@ from . import assets, exercise
 # happens to be installed.
 def project_root() -> pathlib.Path:
     return pathlib.Path(os.environ.get("DSVIZ_PROJECT", ".")).resolve()
+
+
+def repo_slug(root: pathlib.Path) -> str:
+    """`owner/name` for this checkout's origin, or empty if it has none."""
+    import re
+    import subprocess
+
+    try:
+        url = subprocess.run(
+            ["git", "-C", str(root), "config", "--get", "remote.origin.url"],
+            capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return re.sub(r"^(git@github\.com:|https://github\.com/)|\.git$", "", url)
 
 
 # --- the workspace ------------------------------------------------------
@@ -90,7 +104,7 @@ def hand_in(root: pathlib.Path, task: str, code: str) -> tuple[int, dict]:
     Run the submission, stamp it, and write it where grading will look.
 
     Running it here is what makes the stamp mean something: the record cannot
-    be written without the code having executed, so `solutions/` cannot fill up
+    be written without the code having executed, so `result/` cannot fill up
     with code nobody ever ran.
     """
     from . import attest
@@ -103,9 +117,12 @@ def hand_in(root: pathlib.Path, task: str, code: str) -> tuple[int, dict]:
     except Exception as err:                              # noqa: BLE001
         return 400, {"error": f"this code does not run: {err}"}
 
-    solutions = root / "solutions"
-    solutions.mkdir(parents=True, exist_ok=True)
-    target = solutions / f"{task}.ds"
+    # Created by the first hand-in and not before. An exercise that shipped
+    # an empty `solutions/` was inviting a student to put a file in it, which
+    # is the one route into it that does not work.
+    results = root / "result"
+    results.mkdir(parents=True, exist_ok=True)
+    target = results / f"{task}.ds"
     target.write_text(stamped)
     return 200, {"handed_in": str(target.relative_to(root)),
                  "bytes": len(stamped)}
@@ -177,6 +194,14 @@ class Handler(SimpleHTTPRequestHandler):
         disk would be a per-exercise copy of the editor again.
         """
         page = (assets.web_dir() / "index.html").read_text()
+        # Which repository the commit button pushes back to. Read from git
+        # rather than configured: the exercise is a fork, so its own remote is
+        # the only thing that knows the answer, and a student who forked it
+        # should not have to edit a file to say so.
+        slug = repo_slug(self.root)
+        if slug:
+            page = page.replace('<meta name="dsviz-repo" content="">',
+                                f'<meta name="dsviz-repo" content="{slug}">', 1)
         names = ",".join(exercise.task_names(self.root))
         renamed = html.escape(json.dumps(exercise.titles(self.root)), quote=True)
         tag = (f'<meta name="dsviz-tasks" content="{names}">\n'
@@ -271,7 +296,7 @@ def serve(port: int) -> int:
     print(f"  exercise:  {root}")
     print(f"  workspace: .dsviz/workspace.json  "
           f"({len(load_workspace(root))} file(s))")
-    print("  hand-ins written to: solutions/")
+    print("  hand-ins written to: result/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -283,7 +308,7 @@ def serve(port: int) -> int:
 
 def grade() -> int:
     """
-    Score what is in `solutions/`, on held-out input when it is available.
+    Score what is in `result/`, on held-out input when it is available.
 
     Held-out data lives outside the published exercise, so it reaches CI but
     never the browser. Locally its absence is expected; in CI it means the
@@ -313,9 +338,9 @@ def grade() -> int:
               "(local run).\n")
 
     offered = exercise.task_names(root)
-    files = sorted((root / "solutions").glob("*.ds"))
+    files = sorted((root / "result").glob("*.ds"))
     if not files:
-        print("No solutions found in solutions/.")
+        print("Nothing handed in — result/ is empty or absent.")
         print("Commit one from the editor — an empty submission is not a pass.")
         return 1
 
@@ -334,7 +359,7 @@ def grade() -> int:
         graded += 1
         text = path.read_text()
 
-        # Was this actually run, or did it appear here? `solutions/` is written
+        # Was this actually run, or did it appear here? `result/` is written
         # by the editor's server, which runs the code and stamps what it did
         # into the file. Recomputing that stamp is what separates a submission
         # from a file somebody copied in.
@@ -393,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_serve = sub.add_parser("serve", help="open the editor on this exercise")
     p_serve.add_argument("port", nargs="?", type=int, default=8000)
-    sub.add_parser("grade", help="score what is in solutions/")
+    sub.add_parser("grade", help="score what is in result/")
     sub.add_parser("tasks", help="list the tasks this version ships")
 
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])

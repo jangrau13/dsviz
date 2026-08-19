@@ -350,7 +350,7 @@ function scheduleRun() {
  * Where a student's files actually live.
  *
  * They used to be loose `.ds` files in the checkout, which had two problems.
- * Work was lost on reload unless save was pressed, and `solutions/` could be
+ * Work was lost on reload unless save was pressed, and `result/` could be
  * filled by copying one of those files into it — a submission that never went
  * near the editor. Both go away if the files are not loose: the server keeps
  * them in `.dsviz/workspace.json` and hands them back when the page opens.
@@ -1135,7 +1135,7 @@ function showHandIn(res) {
   $("menuScrim").hidden = false;
 
   // Handing in goes through the server, which runs the code again and writes
-  // `solutions/<task>.ds` itself. That is deliberate: the file grading reads
+  // `result/<task>.ds` itself. That is deliberate: the file grading reads
   // is written by something that has seen the code run, so a submission
   // cannot be a file somebody copied into the folder.
   const local = $("handinSave");
@@ -1143,10 +1143,10 @@ function showHandIn(res) {
 }
 
 /**
- * Ask the server to write this submission into `solutions/`.
+ * Ask the server to write this submission into `result/`.
  *
  * The page could write the file itself — it did, once — but then the only
- * thing standing between `solutions/` and code nobody ever ran was etiquette.
+ * thing standing between `result/` and code nobody ever ran was etiquette.
  * The server runs it, records what it did, and writes both together.
  */
 async function handInToRepo() {
@@ -1278,7 +1278,7 @@ function originRepo() {
 async function commitToRepo() {
   if (!currentAssignment) { toast("pick a task before committing"); return; }
   await handInToRepo();
-  toast("now commit and push from your checkout: git add solutions && git commit");
+  toast("now commit and push from your checkout: git add result && git commit");
 }
 
 function escapeHtml(s) {

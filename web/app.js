@@ -105,10 +105,14 @@ async function boot() {
   setStatus("loading dsviz…", "busy");
   // `render_manim` is deliberately excluded: it imports manim, which is not
   // available in the browser. The page draws from `shapes` instead.
-  const modules = ["__init__", "values", "core", "patterns", "types", "expr",
-                   "grammar", "syntax", "runtime", "project", "notation",
-                   "notation_mr", "notation_spark", "metrics", "contest",
-                   "shapes", "assignment", "langserver"];
+  // Kept in step with what the package actually imports by
+  // tests/package_test.py, which walks the import graph from these entry
+  // points. A module added to the package and not to this list is a page that
+  // loads to an ImportError, which no Python suite can see.
+  const modules = ["__init__", "assets", "values", "core", "patterns", "types",
+                   "expr", "grammar", "syntax", "runtime", "project",
+                   "notation", "notation_mr", "notation_spark", "metrics",
+                   "contest", "shapes", "assignment", "langserver"];
   pyodide.FS.mkdirTree("/home/pyodide/dsviz");
   for (const name of modules) {
     const src = await fetch(`dsviz/${name}.py`).then((r) => {

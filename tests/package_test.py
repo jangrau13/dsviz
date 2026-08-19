@@ -110,13 +110,11 @@ with tempfile.TemporaryDirectory() as tmp:
         ok("the wheel ships the editor", "dsviz/_web/index.html" in names)
         ok("the wheel ships the editor's script", "dsviz/_web/app.js" in names)
 
-        # The engine the browser fetches, module for module. app.js names them;
-        # a module added to that list and not to the package is a page that
-        # loads to a broken import, which no Python suite would catch.
+        # The engine the browser fetches, module for module.
         app_js = (assets.web_dir() / "app.js").read_text()
         block = app_js.split("const modules = [", 1)[-1].split("]", 1)[0]
-        needed = [w.strip().strip('"\'') for w in block.split(",") if w.strip()]
-        absent = [m for m in needed if f"dsviz/{m}.py" not in names]
+        listed = [w.strip().strip('"\'') for w in block.split(",") if w.strip()]
+        absent = [m for m in listed if f"dsviz/{m}.py" not in names]
         ok("the wheel ships every module the editor loads", not absent,
            ", ".join(absent))
 
@@ -177,6 +175,86 @@ print(json.dumps(json.loads(judge_assignment("t1-wordcount", code))["verdict"]))
             ok("the `dsviz` command is installed",
                cli.returncode == 0 and "t1-wordcount" in cli.stdout,
                cli.stderr.strip()[-200:])
+
+# --- the editor loads everything the engine needs ------------------------
+# The list in app.js is written by hand, and the browser has no import system
+# that can go and fetch a module it turns out to want. So a module added to the
+# package and imported by one already on the list makes the page die with
+# `cannot import name 'x' from 'dsviz'` — while every Python suite passes,
+# because CPython simply imports it from disk.
+#
+# This happened: `assets` was added, `assignment` imported it, and the editor
+# broke while 24 suites stayed green. Rather than checking the list against
+# itself, walk the import graph from what the page actually imports and
+# require the list to cover it.
+import ast                                                      # noqa: E402
+
+PACKAGE = assets.modules_dir()
+
+
+def intra_imports(module: str) -> set:
+    """The modules of this package that `module` imports."""
+    tree = ast.parse((PACKAGE / f"{module}.py").read_text())
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 1:
+            if node.module:                          # from .x import y
+                found.add(node.module.split(".")[0])
+            else:                                    # from . import x, y
+                found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("dsviz."):
+                    found.add(alias.name.split(".")[1])
+    return {m for m in found if (PACKAGE / f"{m}.py").exists()}
+
+
+# What app.js runs once the modules are written: langserver for the editor,
+# assignment for the catalogue and the judging.
+ENTRY_POINTS = {"__init__", "langserver", "assignment"}
+required, walked = set(ENTRY_POINTS), set()
+while required - walked:
+    current = (required - walked).pop()
+    walked.add(current)
+    required |= intra_imports(current)
+
+app_js = (assets.web_dir() / "app.js").read_text()
+block = app_js.split("const modules = [", 1)[-1].split("]", 1)[0]
+loaded = {w.strip().strip('"\'') for w in block.split(",") if w.strip()}
+
+ok("the editor loads every module the engine imports",
+   not (required - loaded),
+   "app.js never fetches " + ", ".join(sorted(required - loaded))
+   if required - loaded else "")
+
+# The reverse is only untidiness, but an unused fetch is a module that has
+# quietly stopped being part of the engine, which is worth knowing.
+ok("and does not fetch modules nothing imports", not (loaded - required),
+   ", ".join(sorted(loaded - required)))
+
+# Stronger than the name check: copy out exactly the modules the page fetches,
+# with nothing else reachable, and import what the page imports. In this
+# checkout every module is on disk and CPython finds it whatever app.js says,
+# which is why the browser could break while the suite stayed green. Here the
+# listed set is all there is.
+with tempfile.TemporaryDirectory() as sandbox:
+    sandbox = pathlib.Path(sandbox)
+    (sandbox / "dsviz").mkdir()
+    for name in sorted(loaded):
+        source = PACKAGE / f"{name}.py"
+        if source.is_file():
+            (sandbox / "dsviz" / f"{name}.py").write_text(source.read_text())
+    probe = (
+        "from dsviz.langserver import analyse, analyse_project, completions, "
+        "hover, reference\n"
+        "from dsviz.assignment import catalogue, judge_assignment, ASSIGNMENTS\n"
+        "assert ASSIGNMENTS, 'no tasks'\n"
+        "print('ok')\n")
+    run = subprocess.run([sys.executable, "-c", probe], cwd=sandbox,
+                         capture_output=True, text=True)
+    ok("what the page fetches is enough to import what the page imports",
+       run.returncode == 0 and "ok" in run.stdout,
+       (run.stderr.strip().splitlines() or ["?"])[-1][:150])
 
 print("ALL PACKAGE TESTS PASSED" if not failures
       else f"{len(failures)} FAILED: {', '.join(failures)}")

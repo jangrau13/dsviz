@@ -32,16 +32,41 @@ class App:
 app = App()
 
 world = World(machines=[bank, app])
+
+def story() -> void:
+    owed: int = bank.balance("savings")
+
+job = Calls(run=story)
+world.run(job)
 """
 
 MAPREDUCE = """split doc1: "the cat sat"
 
-def map(key: string, value: string) -> void:
+def tokenize(key: string, value: string) -> void:
     for word: string in split(value):
         emit(word, 1)
 
-def reduce(key: string, values: [int]) -> int:
-    sum(values)
+def total(key: string, values: [int]) -> int:
+    return sum(values)
+
+def byKey(key: string, n: int) -> int:
+    return hash(key) mod n
+
+@mapper
+class Worker:
+    pass
+
+@reducer
+class Collector:
+    pass
+
+m1 = Worker(speed=1.0)
+r1 = Collector(speed=1.0)
+
+world = World(machines=[m1, r1])
+
+job = MapReduce(map=tokenize, reduce=total, partition=byKey)
+world.run(job)
 """
 
 print("=== each dialect builds through its own builder ===")

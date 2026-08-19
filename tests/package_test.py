@@ -49,15 +49,29 @@ ok("every task has a starter", not missing, ", ".join(missing))
 # disagreed for `@process` programs, and the result was that no clocks task
 # could be handed in at all — a break invisible to every test that only ran
 # starters directly.
+#
+# The two kinds of task pull in opposite directions here, and both matter. An
+# exploration task ships complete and must hand in as it stands. An
+# implementation task ships with the wiring missing, and its starter must
+# NOT run: a scaffold that hands in successfully is a task that asks for
+# nothing.
 from dsviz import attest                                        # noqa: E402
 
-unstampable = []
-for name in ASSIGNMENTS:
+unstampable, too_easy = [], []
+for name, spec in ASSIGNMENTS.items():
+    asks_for_work = bool(spec.expects or spec.requires or spec.budgets)
     try:
-        attest.stamp(name, ASSIGNMENTS[name].starter)
+        attest.stamp(name, spec.starter)
+        if asks_for_work:
+            too_easy.append(name)
     except Exception as err:                                    # noqa: BLE001
-        unstampable.append(f"{name}: {str(err).splitlines()[0]}")
-ok("every task can be handed in", not unstampable, "; ".join(unstampable))
+        if not asks_for_work:
+            unstampable.append(f"{name}: {str(err).splitlines()[0]}")
+ok("every exploration task can be handed in as it ships",
+   not unstampable, "; ".join(unstampable))
+ok("no graded task's scaffold runs on its own", not too_easy,
+   ", ".join(too_easy) + " ran without the student writing anything"
+   if too_easy else "")
 
 
 # --- the built wheel ----------------------------------------------------

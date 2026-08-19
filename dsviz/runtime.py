@@ -254,10 +254,26 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
     # caller is the job itself, so a program of plain calls needs no machine
     # invented to hold them — the shape is the same as every other job:
     # describe a world, build a job, run it.
+    # A program that never runs anything is not a program that works — it is
+    # one that has had its last two lines deleted. Judging it on "did it raise"
+    # passed exactly that, so a submission could keep the machines, drop the
+    # job and the `world.run`, and be marked as running without errors.
+    if not mod.runs:
+        raise NotationError([Diagnostic(
+            1, 1, "error",
+            "this program never runs anything",
+            hint="build a job and run it in the world, e.g. "
+                 "job = Calls(run=story) and then world.run(job)")])
+
     for run in mod.runs:
         job = next((j for j in mod.jobs if j.var == run.job), None)
         if job is None:
-            continue
+            raise NotationError([Diagnostic(
+                1, 1, "error",
+                f"world.run({run.job}) was asked for, but there is no job "
+                f"called {run.job!r}",
+                hint=f"jobs defined here: "
+                     f"{', '.join(j.var for j in mod.jobs) or 'none'}")])
         if job.kind == "Spark" and run_pipeline(mod, c, job, run):
             continue
         if "run" not in job.roles:

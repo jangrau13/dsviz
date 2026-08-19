@@ -46,6 +46,9 @@ world.run(job)
 def total(key: string, values: [int]) -> int:
     return sum(values)
 
+def byKey(key: string, n: int) -> int:
+    return hash(key) mod n
+
 
 @mapper
 class Worker:
@@ -62,7 +65,7 @@ r2 = Collector(speed=1.0)
 
 world = World(machines=[m1, m2, r1, r2])
 
-job = MapReduce(map=tokenize, reduce=total, combine=total)
+job = MapReduce(map=tokenize, reduce=total, combine=total, partition=byKey)
 world.run(job)
 ''',
 }

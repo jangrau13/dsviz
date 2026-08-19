@@ -325,6 +325,42 @@ def build_mr(source: str, *, seed: int | None = None):
     # visible on the page instead of happening by convention.
     roles = job_roles(source)
 
+    # Every position must be filled by a function the student wrote. There used
+    # to be a default behind each one — a built-in word count, a built-in sum,
+    # a built-in hash — so a submission that bound nothing still produced
+    # almost-right answers and scored most of the marks off the engine's own
+    # implementation. A reference solution written before `job =` existed
+    # scored 5/7 that way, and the two it missed were the two that needed
+    # `lower()`: the giveaway was output that had never been through the
+    # student's mapper at all.
+    #
+    # Nothing is filled in for them now. A job that does not say who does the
+    # work is not a job.
+    required = ("map", "reduce", "partition")
+    if not roles:
+        raise NotationError([Diagnostic(
+            1, 1, "error",
+            "this program never says which functions do the work",
+            hint="wire them up with e.g. "
+                 "job = MapReduce(map=…, reduce=…, partition=…) and then "
+                 "world.run(job)")])
+    missing = [r for r in required if not roles.get(r)]
+    if missing:
+        raise NotationError([Diagnostic(
+            1, 1, "error",
+            f"the job does not say which function is the "
+            f"{', '.join(missing)}",
+            hint="every position has to be filled: "
+                 "MapReduce(map=…, reduce=…, partition=…)")])
+    unknown = [(r, roles[r]) for r in required if roles[r] not in funcs]
+    if unknown:
+        r, name = unknown[0]
+        raise NotationError([Diagnostic(
+            1, 1, "error",
+            f"the job passes {name!r} as the {r}, but there is no function "
+            f"called {name!r}",
+            hint=f"defined here: {', '.join(sorted(funcs)) or 'nothing'}")])
+
     def bound(role: str):
         """The function passed for this role, if it was passed and parsed."""
         name = roles.get(role)

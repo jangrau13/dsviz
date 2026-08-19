@@ -1340,6 +1340,13 @@ function loadCatalogue() {
   }
   sel.appendChild(asg);
 
+  // Free play belongs to this repository, not to an exercise. An exercise
+  // says which tasks it consists of, and offering it Spark and vector-clock
+  // examples alongside them undoes that: Assignment 1 is about MapReduce and
+  // RPC, and a dropdown listing two other topics tells a student they are
+  // behind on work that is not theirs.
+  if (only.trim()) return;
+
   // No MapReduce demos here: they would give away the graded tasks.
   const groups = {
     Spark: ["spark", "lineage"],

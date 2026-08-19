@@ -399,6 +399,24 @@ GOALS = {
 # the student's to write. Reference solutions are never in this file: it is
 # served to the browser, so anything here is visible to students.
 
+WORLD_BASICS = Assignment(
+    name="t0-world",
+    title="Start here: machines and a world",
+    goals=["rpc"],
+    brief="Before any of it is distributed, you have to be able to say what "
+          "exists. A kind of machine, the machines that exist, the world they "
+          "exist in, and a piece of work run in it — this is all four, once.",
+    steps=[
+        "Run it as given. Two machines, one call, and a diagram of both.",
+        "Add a third machine, and put it in the world. A machine you make "
+        "but leave out of the world is not in the picture — try that too.",
+        "Make the machine being called slower, and watch the call take "
+        "longer.",
+        "Add a second call, so the other machine has something to do.",
+    ],
+    dialect="rpc",
+)
+
 RPC_BASICS = Assignment(
     name="t0-rpc",
     title="Task 0: calls over a network",
@@ -618,7 +636,7 @@ BUFFERING = Assignment(
 )
 
 ASSIGNMENTS = {a.name: a for a in (
-    RPC_BASICS, WORD_COUNT, COMBINER, MR_OVER_RPC,
+    WORLD_BASICS, RPC_BASICS, WORD_COUNT, COMBINER, MR_OVER_RPC,
     SPARK_MEMORY, TELEMETRY, KMEANS,
     LAMPORT, CLOCKS, BUFFERING)}
 

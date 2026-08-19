@@ -636,11 +636,13 @@ MR_OVER_RPC = Assignment(
     name="a1-servers",
     title="Map and reduce on separate servers",
     goals=["rpc", "failure", "mapreduce", "locality"],
-    brief="The same word count as Task 1, except the map and the reduce now "
-          "live on different machines and the client has to ask each of them "
-          "across a network.",
+    brief="Task 1 was already distributed across five machines, and never "
+          "made you write a deadline, a retry or a crash. Here the framework "
+          "is gone: the client asks a map server and a reduce server by hand, "
+          "and every failure it was hiding is now a line you have to write.",
     steps=[
-        "Run it as given. The client cannot reduce what it has not been "
+        "Run it as given, and count what you had to say out loud that Task 1 "
+        "never asked you for. The client cannot reduce what it has not been "
         "given, so it waits.",
         "Give the map call a deadline shorter than the work takes.",
         "Take the map server down before the first call, then retry into it. "

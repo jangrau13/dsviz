@@ -6,6 +6,10 @@ is what the test suite and the authoring loop see. Installed from git with
 `uv add`, there is no repository around it — a wheel is only what was put
 inside it — so that directory is copied into the package itself as `_web/`.
 
+The documentation site is here too, on the same terms: built by `mkdocs
+build` from `docs/`, and copied inside the wheel so a student who installs
+nothing still gets the whole reference on the port the editor is on.
+
 Starters are not here. They belong to the exercise, in its own `tasks/`, and
 the package has none of its own to resolve.
 
@@ -26,6 +30,11 @@ def _resolve(bundled: str, source: str) -> pathlib.Path:
     """The bundled directory if this is an install, the sibling if not."""
     inside = PACKAGE / bundled
     return inside if inside.is_dir() else _REPO / source
+
+
+def site_dir() -> pathlib.Path:
+    """The built documentation site: the full language reference."""
+    return _resolve("_site", "site")
 
 
 def web_dir() -> pathlib.Path:

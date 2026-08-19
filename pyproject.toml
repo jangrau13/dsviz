@@ -20,6 +20,9 @@ dependencies = [
 [project.optional-dependencies]
 # Only the lecturer renders video; a student never installs manim.
 render = ["manim>=0.18"]
+# Only whoever regenerates the documentation site builds it. A student gets
+# the built site inside the package and installs none of this.
+docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocs-llmstxt>=0.1"]
 
 [project.scripts]
 dsviz = "dsviz.cli:main"
@@ -46,7 +49,11 @@ packages = ["dsviz"]
 "web/style.css" = "dsviz/_web/style.css"
 "web/lang.js" = "dsviz/_web/lang.js"
 "web/examples.js" = "dsviz/_web/examples.js"
+# The documentation site, built by `mkdocs build`. A student installs no
+# mkdocs: the built HTML ships, and the editor's "full docs" link opens it
+# on the port the editor is already on.
+"site" = "dsviz/_site"
 
 [tool.hatch.build.targets.sdist]
-include = ["dsviz", "web", "tests", "README.md", "pyproject.toml"]
+include = ["dsviz", "web", "site", "tests", "README.md", "pyproject.toml"]
 exclude = ["web/dsviz"]

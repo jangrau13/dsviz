@@ -200,6 +200,40 @@ ok("the one-file reference covers every builtin", not absent, ", ".join(absent))
 ok("and does not carry the syntax the engine refuses",
    "def map(" not in single and "def reduce(" not in single)
 
+# The built site ships inside the wheel, which means it is a committed
+# artefact and can fall behind the tables it was built from. Every documented
+# symbol has to appear in the built HTML; a language entry added without a
+# rebuild fails here rather than reaching a student as a missing page.
+from dsviz import assets  # noqa: E402
+
+site = assets.site_dir()
+if not site.is_dir():
+    ok("the documentation site is built", False,
+       "run: python docs.py --site docs && mkdocs build")
+else:
+    built = "\n".join(p.read_text(errors="ignore")
+                       for p in site.rglob("*.html"))
+    # By signature, not by name: an entry is rendered under the signature it
+    # declares, and some of those never mention the entry's own name —
+    # `update` is written `field: type = expression`. Checking the name here
+    # reported a stale site that was not stale.
+    #
+    # The longest line of the signature, with `<` and `>` escaped and quotes
+    # left alone — which is exactly what a code span does to it. A two-line
+    # signature like `@kind` / `class Name:` is never one string on the page,
+    # hence the longest line rather than the whole thing.
+    import html as _html
+
+    def rendered(sig: str) -> str:
+        return _html.escape(max(sig.split("\n"), key=len), quote=False)
+
+    stale = sorted(d.name for d in DOCS if rendered(d.signature) not in built)
+    ok("the built site covers every documented symbol", not stale,
+       ", ".join(stale) + " — rebuild with: python docs.py --site docs "
+       "&& mkdocs build" if stale else "")
+    missing_builtins = sorted(n for n in BUILTINS if f"{n}(" not in built)
+    ok("and every builtin", not missing_builtins, ", ".join(missing_builtins))
+
 print()
 if failures:
     print(f"{len(failures)} DOCUMENTATION CHECK(S) FAILED")

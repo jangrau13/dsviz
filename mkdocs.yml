@@ -72,6 +72,7 @@ nav:
       - Machines: language/machines.md
       - Worlds: language/worlds.md
       - Jobs: language/jobs.md
+      - Messages: language/messages.md
       - Datasets: language/datasets.md
       - Checks: language/checks.md
       - Built-in functions: language/builtins.md

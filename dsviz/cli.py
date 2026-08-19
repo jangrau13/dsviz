@@ -221,7 +221,16 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             self._send_page()
             return
-        if self.path.split("?")[0].rstrip("/") == "/docs":
+        if self.path.split("?")[0].rstrip("/") == "/docs" or \
+                self.path.startswith("/docs/"):
+            if self._send_site():
+                return
+            # The fallback is for a checkout with no built site, not for a
+            # page that does not exist in one. Otherwise a mistyped path
+            # under /docs/ answers 200 with the wrong page.
+            if assets.site_dir().is_dir():
+                self.send_error(404, "no such page")
+                return
             self._send_docs()
             return
         served = self._from_package()
@@ -286,9 +295,56 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_site(self) -> bool:
+        """
+        The documentation site, served from inside the package.
+
+        `mkdocs build` produces it and the wheel carries it, so a student who
+        installs nothing gets the real thing — navigation, search, themed to
+        their system — on the port the editor is already on. Returns False if
+        no site was built, and the caller falls back to a plain rendering.
+
+        Paths are resolved under the site directory and checked to still be
+        inside it, so `/docs/../../etc/passwd` is refused rather than served.
+        """
+        root = assets.site_dir()
+        if not root.is_dir():
+            return False
+
+        rel = self.path.split("?")[0][len("/docs"):].lstrip("/")
+        target = (root / rel) if rel else root
+        if target.is_dir():
+            target = target / "index.html"
+        try:
+            inside = target.resolve().is_relative_to(root.resolve())
+        except (OSError, ValueError):
+            return False
+        if not inside or not target.is_file():
+            return False
+
+        kind = {".html": "text/html; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+                ".js": "text/javascript; charset=utf-8",
+                ".json": "application/json",
+                ".svg": "image/svg+xml", ".png": "image/png",
+                ".woff2": "font/woff2", ".woff": "font/woff",
+                ".txt": "text/plain; charset=utf-8"}.get(
+                    target.suffix, "application/octet-stream")
+        body = target.read_bytes()
+        self.send_response(200)
+        self.send_header("content-type", kind)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def _send_docs(self) -> None:
         """
         The language reference, as a page of its own.
+
+        The fallback, for a checkout where `mkdocs build` has not been run.
+        The built site is the real answer and ships inside the package; this
+        is here so the link still opens something rather than 404ing.
 
         The editor links to `docs/` from two places, and until now that was a
         directory of built HTML which the old vendoring server copied in beside

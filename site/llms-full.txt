@@ -1,0 +1,598 @@
+# dsviz
+
+> The dsviz language reference.
+
+The reference for the dsviz language. A program declares kinds of machine, makes instances of them, collects them into a world, and runs a job in that world. These pages describe those constructs and nothing else.
+
+# Overview
+
+# dsviz
+
+This is the reference for the language: how to write a program, and what each part of one means. What to build is in the task open in the editor, not here.
+
+A program has three parts.
+
+```
+@machine
+class Ledger:
+    held: int = 120
+
+    @duration(0.4)
+    def deposit(amount: int) -> int:
+        held: int = held + amount
+        return held
+
+bank = Ledger(speed=1.0)
+
+world = World(machines=[bank])
+
+def story() -> void:
+    now: int = bank.deposit(30)
+
+job = Calls(run=story)
+world.run(job)
+```
+
+**The machines** are decorated classes. A class is a *kind* of machine; what runs is an instance you make from it, carrying its own speed, its own failure behaviour, and whatever it remembers. A field written in the class body — `held: int = 120` — is state: the next call can see what the last one did, and a crash takes it away again.
+
+**The world** says which machines exist together. Nothing runs outside one, because a machine on its own is a description rather than a system.
+
+**The job** is the computation, handed to the world to run. The same job can be run in a fast world and a broken one, which is the comparison most of the course is about.
+
+Everything else is a variation on those three: more machines, a different job, a world that breaks.
+# The language
+
+# Writing a program
+
+One statement per line. `#` starts a comment. Indentation delimits the body of a function, a loop, a conditional or a parallel block, as in Python.
+
+Every name carries a written type. Nothing is inferred: a parameter, a local, a loop variable and a return type are all stated, and the checker holds the program to what was written. That is what lets a job verify a function fits the position it was passed to.
+
+```
+def hottest(city: string, readings: [int]) -> int:
+    top: int = 0
+    for reading: int in readings:
+        if reading > top:
+            top: int = reading
+    return top
+```
+
+Names are yours. A function fits a position because its types fit, and you say which function goes where when you build the job. What you called it never enters into it.
+
+## Types
+
+| Type       | Is                  |
+| ---------- | ------------------- |
+| `int`      | a whole number      |
+| `string`   | text                |
+| `[int]`    | a list of numbers   |
+| `[string]` | a list of text      |
+| `pair`     | a (key, value) pair |
+| `void`     | nothing             |
+
+`[int]` and `[string]` are deliberately distinct: the mistakes worth catching are the ones that confuse a list of counts with a list of words.
+
+## Several files
+
+A program can span files. `use` brings another file's definitions into scope; files are combined in dependency order, and a mistake is reported against the file and line it is in. Circular `use` and missing files are errors rather than run-time surprises.
+
+# Built-in functions
+
+Deliberately general: `split` and `lower` are string operations and `sum` is arithmetic. Nothing here solves part of a task, because anything problem-shaped is a function you write.
+
+| Function | Type                                                  |
+| -------- | ----------------------------------------------------- |
+| `abs`    | `abs(n: int) -> int`                                  |
+| `hash`   | `hash(key) -> int, a stable 31-hash`                  |
+| `join`   | `join(values: [string], separator: string) -> string` |
+| `len`    | `len(x) -> int`                                       |
+| `lower`  | `lower(text: string) -> string`                       |
+| `max`    | `max(values: [int]) -> int`                           |
+| `min`    | `min(values: [int]) -> int`                           |
+| `sort`   | `sort(values: [string]) -> [string]`                  |
+| `split`  | `split(text: string) -> [string]`                     |
+| `strip`  | `strip(text: string) -> string`                       |
+| `sum`    | `sum(values: [int]) -> int`                           |
+| `unique` | `unique(values: [string]) -> [string]`                |
+| `upper`  | `upper(text: string) -> string`                       |
+
+# Checks
+
+Statements that assert something about a run.
+
+### `budget METRIC < N`
+
+A non-functional limit.
+
+Correctness is the floor. Budgets are what separate a good design from one that merely works. The metrics are network, makespan, imbalance, tail, memory and faults.
+
+```
+budget network < 40
+```
+
+### `expect KEY = N`
+
+Assert a final count.
+
+The correctness check.
+
+```
+expect zurich = 3
+```
+
+### `assert P.clock == [..]`
+
+Check a claimed clock.
+
+Write 'assert A || B' for concurrency and 'assert A ->> B' for happens-before. A wrong claim is reported causally.
+
+```
+assert P3.clock == [2, 3, 1]
+```
+
+### `note TEXT`
+
+A caption on the diagram.
+
+Shown at this point in the run. Useful for narrating a video.
+
+```
+note the shuffle starts here
+```
+
+# Datasets
+
+Values built from other values, and what is remembered about how.
+
+### `textFile(name)`
+
+Read input into an RDD.
+
+The start of a pipeline. The name is an input the program declares or a file the task ships.
+
+```
+departures = textFile("departures.csv")
+```
+
+### `parallelize([...])`
+
+Make an RDD from a list.
+
+Useful when the data is short enough to write down.
+
+```
+stops = parallelize(["bern,4", "chur,0"])
+```
+
+### `.map(lambda x: ...)`
+
+One record in, one out.
+
+Narrow, so it needs no shuffle and pipelines inside the current stage.
+
+```
+rows.map(lambda row: row.split(","))
+```
+
+### `.flatMap(lambda x: [...])`
+
+One record in, many out.
+
+Narrow. The function returns a list, and every element of it becomes a record of its own.
+
+```
+rows.flatMap(lambda row: row.split(","))
+```
+
+### `.filter(lambda x: ...)`
+
+Keep records that match.
+
+Narrow, and the cheapest thing you can do before a wide step: every record it drops is one the shuffle does not carry.
+
+```
+delays.filter(lambda d: int(d) > 0)
+```
+
+### `.mapValues(lambda v: ...)`
+
+Change values, keep keys.
+
+Narrow. It leaves the key alone, so nothing has to move.
+
+```
+grouped.mapValues(lambda xs: sum(xs) / len(xs))
+```
+
+### `.reduceByKey(lambda a, b: ...)`
+
+Combine values per key.
+
+Wide: it forces a shuffle and begins a new stage. It combines on the map side first, so only one partial result per key crosses the network — which is what groupByKey does not do.
+
+```
+byStop.reduceByKey(lambda a, b: a + b)
+```
+
+### `.groupByKey()`
+
+Gather every value per key.
+
+Wide, and it ships every record. reduceByKey reaches the same answer while moving far less, so prefer it when you can.
+
+```
+byStop.groupByKey()
+```
+
+### `.sortByKey()`
+
+Order the records by key.
+
+Wide: an order across the whole RDD cannot be decided inside one partition.
+
+```
+totals.sortByKey()
+```
+
+### `.distinct()`
+
+Drop repeated records.
+
+Wide, because two equal records may sit on different machines.
+
+```
+stops.distinct()
+```
+
+### `.join(other)`
+
+Match two pair RDDs on their keys.
+
+Wide: both sides have to be brought together by key.
+
+```
+delays.join(platforms)
+```
+
+### `.partitionBy(lambda k: ...)`
+
+Choose which partition a key goes to.
+
+Wide. Deciding the split yourself is how you keep everything that must be compared together on one machine — and how you cause skew if the function is a poor one.
+
+```
+byStop.partitionBy(lambda k: hash(k))
+```
+
+### `.cache()`
+
+Keep this RDD in memory.
+
+Without it, an RDD read by two branches is computed twice: the lineage is replayed for each. That is what makes an iterative job expensive.
+
+```
+kept = rows.cache()
+```
+
+### `job = Spark(pipeline=rdd, lose=rdd)`
+
+The job to run in the world.
+
+`pipeline` names the last step, which is what forces the whole lineage to run. `lose` throws a step away so you can watch it rebuilt from lineage rather than reloaded.
+
+```
+job = Spark(pipeline=totals, lose=byStop)
+```
+
+# Functions
+
+What you write, and how it is written.
+
+### `def name(param: type) -> type:`
+
+A function you write.
+
+Every parameter and the return type is written down, and nothing is inferred. Writing them is what lets a job check that a function fits the position it is passed to.
+
+```
+def hottest(city: string, readings: [int]) -> int:
+    top: int = 0
+    for reading: int in readings:
+        if reading > top:
+            top: int = reading
+    return top
+```
+
+### `emit(key, value)`
+
+Produce one intermediate pair.
+
+Only the function passed as the job's map may emit. The key chooses a reducer by its hash, and the value is whatever the reducer takes.
+
+```
+emit(city, reading)
+```
+
+### `with parallel():`
+
+Calls that all leave at the same time.
+
+Calls are one after another: each moves the caller past the whole round trip, so the next one leaves from where the last finished. Everything written inside this block leaves at the moment the block begins instead, and the block ends when the last reply is back — so asking three machines costs one round trip rather than three. The far end is unchanged, which is the half worth watching: a machine answers one request at a time, so three calls sent at once to the same machine still queue behind each other. What the block saves is the waiting on the wire, never the work — it pays because the machines are different, not because the calls were written together. No call in the block can be given what another call in it answers, because none of them has answered yet; use the value below the block.
+
+```
+def story() -> void:
+    with parallel():
+        here: int = bank.balance("savings")
+        there: int = mirror.balance("savings")
+```
+
+# Jobs
+
+Handing your functions to something that runs them.
+
+### `job = Calls(run=f)`
+
+A job that is a sequence of calls.
+
+The work is one function, and the job is that function run in the world. Nothing has to be wrapped in a machine to hold it. A MapReduce job has the same shape and takes three functions instead of one.
+
+```
+def story() -> void:
+    chf: int = bank.balance("savings")
+
+job = Calls(run=story)
+world.run(job)
+```
+
+### `job = MapReduce(map=f, reduce=g, partition=h)`
+
+Wire your functions into a job.
+
+A function is the mapper because it was passed as the mapper, and it is accepted there only if its signature fits. Its name has no say in it. `combine=` adds a combiner.
+
+```
+job = MapReduce(map=readSensor, reduce=hottest, partition=spread)
+```
+
+### `Job(..., times=N)`
+
+How many rounds the job runs.
+
+The job runs N times over. That is what you want in a video, and it is what makes an unreliable run worth watching, because the same call does not fail every time.
+
+```
+job = Calls(run=story, times=3)
+```
+
+# Machines
+
+Declaring a kind of machine, and making ones that exist.
+
+### \`@kind
+
+class Name:\`
+
+A kind of machine.
+
+The decorator says what the class is to the simulator. @machine both answers calls and makes them, @mapper and @reducer are the two halves of a job, and @process carries a clock. A class is only a kind of machine. What runs is an instance of it.
+
+```
+@machine
+class Ledger:
+    @duration(0.4)
+    def balance(account: string) -> int:
+        return 120
+```
+
+### `name = Kind(speed=N)`
+
+A machine that exists.
+
+Declaring a class runs nothing. Each instance carries its own settings, so two machines of one kind can differ. That is how you make a straggler.
+
+```
+fast = Worker(speed=1.0)
+slow = Worker(speed=0.3)
+```
+
+### `field: type = value`
+
+What a machine remembers.
+
+Written in the class body, above the methods: a name, its type, and the value it starts at. A machine without state answers the same thing however often it is asked; with it, the second call can see what the first one did. Every machine of that kind has its own — two of them never share a value — and an instance may start somewhere else by naming the field when it is made. It is drawn along the bottom of the machine on the diagram, and it changes there as the run goes on.
+
+```
+@machine
+class Ledger:
+    balance: int = 120
+
+    @duration(0.4)
+    def deposit(amount: int) -> int:
+        balance: int = balance + amount
+        return balance
+```
+
+### `field: type = expression`
+
+Change what a machine remembers.
+
+Inside a method the field is an ordinary name: it reads as what the machine currently holds, and writing to it changes the machine rather than a local that is thrown away when the call returns. Which of the two you get is decided by the class declaration and nothing else, so a parameter may not carry a field's name.
+
+```
+@duration(0.4)
+def deposit(amount: int) -> int:
+    balance: int = balance + amount
+    return balance
+```
+
+### `name = Kind(field=value)`
+
+Start one machine somewhere else.
+
+The class says which fields exist, because that is what makes it this kind of machine; each instance may say what its own start at. That is how two machines of one kind differ in what they hold rather than only in how fast they are.
+
+```
+vault = Ledger(balance=5000)
+petty = Ledger(balance=40)
+```
+
+### `Kind(speed=N)`
+
+Relative speed of one machine.
+
+1.0 is nominal and 0.25 takes four times as long. This is how you make a straggler.
+
+```
+slow = Worker(speed=0.25)
+```
+
+### `@duration(T)`
+
+How long a method takes.
+
+Seconds of work at speed 1.0. A machine with speed 0.5 takes twice as long over the same method.
+
+```
+@duration(0.4)
+def balance(account: string) -> int:
+    return 120
+```
+
+### `Kind(error_rate=P)`
+
+How likely a machine is to break.
+
+0.25 means each piece of work it does has one chance in four of breaking it. The draw is random, so no two runs are alike and one run never settles a question. Every machine runs this risk: a mapper grinding through its split is as exposed as a service answering a request. What happens after it breaks is said separately, with on_crash.
+
+```
+flaky = Ledger(speed=1.0, error_rate=0.25)
+```
+
+### `Kind(on_crash="stay_dead" | "restart")`
+
+What this machine does after it breaks.
+
+How often a machine breaks is only half of how it behaves. A machine that stays down and one that is back in two seconds fail at the same rate and behave nothing alike, because retries help the second and are wasted on the first. The default is "stay_dead", which leaves it down until something restarts it by hand. Coming back does not bring back what it was holding, so a restarted mapper runs its splits again.
+
+```
+flaky = Ledger(error_rate=0.25, on_crash="restart", restart_after=1.5)
+```
+
+### `Kind(restart_after=T)`
+
+How long a restarting machine is down.
+
+Seconds between breaking and answering again. It means something only alongside on_crash="restart". The gap shows on the timeline as the machine sitting idle, and that idle time is what you weigh against losing the work outright.
+
+```
+slow_to_recover = Worker(error_rate=0.2, on_crash="restart", restart_after=3.0)
+```
+
+### `machine.crash()`
+
+Take a machine down.
+
+Everything it remembers goes back to the value it started at, whatever it had been counted up to since, and messages already in flight to it are dropped. On the diagram the machine's own values drop back at the moment it breaks, which is the cost of losing it.
+
+```
+bank.crash()
+```
+
+### `machine.restart()`
+
+Bring a machine back.
+
+It comes back as it was declared, not as it was a moment before it broke, so anything it had worked out has to be worked out again.
+
+```
+bank.restart()
+```
+
+### `machine.method(arg [, deadline=T] [, retries=N])`
+
+Make a synchronous call.
+
+The caller waits for the round trip, so a slow server shows up as caller idle time. Statuses follow gRPC: ok, unavailable, unimplemented, deadline_exceeded.
+
+```
+chf: int = bank.balance("savings", deadline=0.5, retries=2)
+```
+
+# Messages
+
+Processes talking to each other, and what order anyone can be sure of.
+
+### `sender.send(receiver, "label")`
+
+One message, from one process to one other.
+
+The send happens before the receive, and that is the only ordering either process can be sure of. Both carry a logical clock, which the message advances.
+
+```
+depotA.send(depotB, "restock")
+```
+
+### `sender.broadcast("label")`
+
+One message, to every other process.
+
+One send, one stamp, and a copy on its way to each of the others. Delivery rules that talk about "the next message that process sent" are only defined over broadcast, because otherwise the next message may not have been addressed to you.
+
+```
+depotA.broadcast("restock")
+```
+
+### `sender.broadcast("label", late=who)`
+
+Send one copy the slow way.
+
+Everyone else has the message at once; this process does not. Without it every arrival is in send order and nothing is ever out of place, so a delivery rule has nothing to do.
+
+```
+depotA.broadcast("restock", late=depotC)
+```
+
+### `Calls(clock="vector" | "lamport")`
+
+Which logical clock the processes keep.
+
+A vector clock has one entry per process and can say that two events are concurrent. A Lamport clock is a single number: it guarantees that if a happened before b then L(a) < L(b), and nothing in the other direction.
+
+```
+job = Calls(run=deliveries, clock="lamport")
+```
+
+### `Calls(delivery="causal")`
+
+Hold a message until the ones it depends on have arrived.
+
+Without this a message is shown when it arrives, however out of order that is. With it, one that arrives too early is held and offered again each time something is delivered. Nothing is dropped and nothing is reordered on the wire — only the moment each message is shown.
+
+```
+job = Calls(run=deliveries, delivery="causal")
+```
+
+# Worlds
+
+The machines that exist together, and running in them.
+
+### `world = World(machines=[...])`
+
+The system to run in.
+
+Everything about the setting lives here and nothing about the computation, so you can run one job in a fast world and then in a broken one. Without a world, a job has nowhere to run.
+
+```
+world = World(machines=[m1, m2, r1])
+```
+
+### `world.run(job [, on=[...]])`
+
+Run a job in the world.
+
+`on` gives the job a subsystem instead of the whole world, so you can run one job on three machines and then on ten.
+
+```
+world.run(job)
+world.run(job, on=[m1, r1])
+```

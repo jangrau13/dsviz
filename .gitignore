@@ -2,7 +2,6 @@
 media/
 __pycache__/
 *.pyc
-site/
 
 # dsviz is a library, consumed as a git dependency — each exercise resolves
 # and locks for itself. A lock file here pins nothing for anybody and only

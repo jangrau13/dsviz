@@ -1,0 +1,22 @@
+# dsviz
+
+> The dsviz language reference.
+
+The reference for the dsviz language. A program declares kinds of machine, makes instances of them, collects them into a world, and runs a job in that world. These pages describe those constructs and nothing else.
+
+## Overview
+
+- [Overview](https://jangrau13.github.io/dsviz/index.md)
+
+## The language
+
+- [Writing a program](https://jangrau13.github.io/dsviz/language/index.md)
+- [Built-in functions](https://jangrau13.github.io/dsviz/language/builtins/index.md)
+- [Checks](https://jangrau13.github.io/dsviz/language/checks/index.md)
+- [Datasets](https://jangrau13.github.io/dsviz/language/datasets/index.md)
+- [Functions](https://jangrau13.github.io/dsviz/language/functions/index.md)
+- [Jobs](https://jangrau13.github.io/dsviz/language/jobs/index.md)
+- [Machines](https://jangrau13.github.io/dsviz/language/machines/index.md)
+- [Messages](https://jangrau13.github.io/dsviz/language/messages/index.md)
+- [Worlds](https://jangrau13.github.io/dsviz/language/worlds/index.md)
+

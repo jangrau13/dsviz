@@ -180,8 +180,14 @@ for seed in range(24):
     spread.add(acc)
 ok("but with the cluster's own chance it spreads, as a broken reducer should",
    len(spread) > 1, "" if len(spread) > 1 else f"one answer: {sorted(spread)}")
-ok("and Spark's own 6.0 is among the answers a student can see",
-   6.0 in spread, "" if 6.0 in spread else f"{sorted(spread)}")
+# Stronger than "6.0 is reachable": every answer real Spark gave at ANY
+# partition count is in the spread at two — 6.0 at 2 and 3 partitions, 8.625
+# at 4. The simulator is not showing a different world, it is showing several
+# of Spark's at once, from one cluster size.
+SPARK_ANSWERS = {6.0, 8.625}
+ok("every answer Spark gives at any partition count is in the spread at two",
+   SPARK_ANSWERS <= spread,
+   "" if SPARK_ANSWERS <= spread else f"missing {sorted(SPARK_ANSWERS - spread)}")
 
 print()
 if failures:

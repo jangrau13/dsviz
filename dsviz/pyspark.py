@@ -596,10 +596,16 @@ def _partition(values: list, parts: int, rng) -> list:
 
     Spark's three answers to one question are the honest evidence that the
     reducer is broken; a student who ran it once would see a stable number and
-    conclude it was fine. Drawing the grouping fresh each run turns "you
-    happened not to notice" into "you cannot help noticing". Matching Spark
-    record-for-record here would make the simulator agree with Spark and stop
-    teaching the thing Spark is being used to teach.
+    conclude it was fine, and only sweeping partition counts would show
+    otherwise — which no student does. Drawing the grouping fresh each run
+    turns "you happened not to notice" into "you cannot help noticing".
+
+    And it is not a different world: **at two partitions the spread already
+    contains every answer Spark gave at any partition count**, 6.0 and 8.625
+    both among them. So one cluster size here shows the student the whole set
+    of things Spark would say across several. Matching Spark record-for-record
+    would make the simulator agree with Spark and stop teaching the thing
+    Spark is being used to teach.
 
     So a differential run *should* find this one disagreeing. It is the
     deliberate one. Everything else should match.

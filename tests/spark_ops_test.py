@@ -207,6 +207,44 @@ ok("every answer Spark gives at any partition count is in the spread at two",
    SPARK_ANSWERS <= spread,
    "" if SPARK_ANSWERS <= spread else f"missing {sorted(SPARK_ANSWERS - spread)}")
 
+
+# --- signatures that were inverted, and operators that did nothing -------
+#
+# partitionBy is the foldByKey failure again: Spark's is
+# partitionBy(numPartitions, partitionFunc=portable_hash), number first, so
+# reading args[0] as the function refused the documented form and accepted a
+# form that runs nowhere else.
+ok("partitionBy(numPartitions)",
+   apply("partitionBy", [2], [("a", 1), ("b", 2)]) == [("a", 1), ("b", 2)])
+try:
+    apply("partitionBy", [lambda k: 0], [("a", 1)])
+    refused_pb, pb = False, "accepted"
+except NotationError as exc:
+    refused_pb, pb = True, str(exc).replace("\n", " ")
+ok("partitionBy(func) is refused, as Spark refuses it", refused_pb,
+   "" if refused_pb else pb)
+
+
+def sampled(with_replacement, fraction, data, seed):
+    return _apply("sample", [with_replacement, fraction], data, NODE, 1,
+                  Budget(), None, random.Random(seed), 1)
+
+
+# sample returned its input unchanged whatever the fraction, so a pipeline
+# that sampled a tenth went on to process all of it — and the cost model
+# priced the full volume, so nothing looked wrong. Spark's own sizes over
+# eight seeds at fraction 0.5 of six rows were [3, 3, 1, 1, 3, 3, 4, 4]:
+# it varies, and it is not six. Sizes cannot be matched exactly — the two
+# engines draw from different generators — so what is pinned is that it
+# draws at all, respects 1.0, and can repeat with replacement.
+drawn = [len(sampled(False, 0.5, list(range(6)), seed)) for seed in range(8)]
+ok("sample actually samples", len(set(drawn)) > 1 and max(drawn) <= 6,
+   "" if len(set(drawn)) > 1 else f"every seed gave {drawn[0]}")
+ok("sample keeps everything at fraction 1.0",
+   len(sampled(False, 1.0, [1, 2, 3], 0)) == 3)
+ok("sample can repeat a row with replacement",
+   len(sampled(True, 2.0, [1, 2, 3], 1)) > 3)
+
 print()
 if failures:
     print(f"{len(failures)} SPARK OPERATOR CHECK(S) FAILED")

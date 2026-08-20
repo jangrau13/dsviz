@@ -644,8 +644,63 @@ def _apply(op: str, args: list, data: list, node, line: int,
 
     if op in ("cache", "persist"):
         return data
-    if op in ("coalesce", "repartition", "sample"):
+    if op in ("coalesce", "repartition"):
         return data
+
+    if op == "partitionBy":
+        # Spark's is partitionBy(numPartitions, partitionFunc=portable_hash) —
+        # the number comes first. Reading args[0] as the function meant
+        # partitionBy(2), which is what the documentation shows, was refused
+        # as "needs a function", while partitionBy(lambda …) was accepted and
+        # runs nowhere else. Same failure as foldByKey: it succeeded while
+        # teaching an API that does not exist.
+        if not args or not isinstance(args[0], int) or isinstance(args[0], bool):
+            raise NotationError([Diagnostic(
+                node.lineno + line - 1, node.col_offset + 1, "error",
+                "partitionBy() takes numPartitions first",
+                hint="write it as partitionBy(2), optionally with a "
+                     "partitioning function after the number")])
+        list(pairs())          # it is a pair operation, so insist on pairs
+        # Which partition a record lands in is not modelled: Spark hashes the
+        # key with portable_hash, and no Python hash reproduces that. What is
+        # modelled is the shuffle it costs, which is why this is in WIDE.
+        return list(data)
+
+    if op == "sample":
+        # sample(withReplacement, fraction, seed=None). This returned its
+        # input unchanged whatever the fraction, so a pipeline that sampled
+        # a tenth of the data went on to process all of it — and the cost
+        # model priced the full volume too, so nothing looked wrong.
+        if len(args) < 2 or not isinstance(args[1], (int, float)):
+            raise NotationError([Diagnostic(
+                node.lineno + line - 1, node.col_offset + 1, "error",
+                "sample() takes withReplacement, fraction",
+                hint="write it as sample(False, 0.1) for a tenth of the "
+                     "rows")])
+        with_replacement, fraction = bool(args[0]), float(args[1])
+        if fraction < 0:
+            raise NotationError([Diagnostic(
+                node.lineno + line - 1, node.col_offset + 1, "error",
+                f"sample() needs a fraction of 0 or more, not {fraction}",
+                hint="a fraction is a proportion of the rows, so 0.1 is a "
+                     "tenth")])
+        if rng is None:                 # nothing to draw with: keep it whole
+            return list(data)
+        out = []
+        for rec in data:
+            if with_replacement:
+                # Spark draws a Poisson count per record; drawing repeatedly
+                # from the same Bernoulli is close enough to show that a row
+                # can appear more than once.
+                count, draw = 0, fraction
+                while draw > 0:
+                    if rng.random() < min(draw, 1.0):
+                        count += 1
+                    draw -= 1.0
+                out.extend([rec] * count)
+            elif rng.random() < fraction:
+                out.append(rec)
+        return out
 
     if op == "map":
         f = need_fn()
@@ -1087,6 +1142,27 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None,
                              if args else ([], {}))
                 if op == "parallelize":
                     data = list(values[0]) if values else []
+                elif op == "range":
+                    # sc.range(start, end=None, step=1), like Python's. It was
+                    # in SOURCES and fell through to resolve_input, which read
+                    # the number as a filename and produced a pipeline with no
+                    # rows — an empty answer rather than an error.
+                    try:
+                        data = list(range(*[int(v) for v in values]))
+                    except (TypeError, ValueError):
+                        raise NotationError([Diagnostic(
+                            rdd.line, 1, "error",
+                            "range() takes whole numbers",
+                            hint="write it as range(10), or "
+                                 "range(1, 10, 2)")]) from None
+                elif op == "wholeTextFiles":
+                    # Spark gives (path, entire contents) rather than a row per
+                    # line, which is the whole difference from textFile: the
+                    # file arrives as one record, so it cannot be split across
+                    # machines.
+                    key = str(values[0]) if values else ""
+                    data = [(key, "\n".join(
+                        resolve_input(key, inputs, rdd.line)))]
                 else:
                     data = resolve_input(values[0] if values else "",
                                          inputs, rdd.line)

@@ -892,8 +892,13 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
     return mod, diags
 
 
-# Where a pipeline starts: these make an RDD rather than reading one.
-RDD_SOURCES = ("textFile", "parallelize")
+# Where a pipeline starts. Taken from the engine rather than restated here:
+# the two lists were separate and had drifted, so `range(...)` and
+# `wholeTextFiles(...)` were in the engine's SOURCES, were offered by the
+# linter, and were not recognised by the parser as starting a pipeline at all.
+# The program then failed with "unknown RDD" naming the variable that the
+# unrecognised line had just defined.
+RDD_SOURCES = tuple(sorted(pyspark.SOURCES))
 
 
 # Things every machine can do to itself, whatever it models. Written as calls

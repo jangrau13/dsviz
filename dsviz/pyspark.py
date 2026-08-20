@@ -86,6 +86,24 @@ WIDE = {"reduceByKey", "groupByKey", "sortByKey", "aggregateByKey",
 # makes in MapReduce, and it is invisible unless the traffic is counted.
 COMBINES = {"reduceByKey", "foldByKey", "aggregateByKey", "combineByKey"}
 
+# Actions, listed so they can be RECOGNISED — not so they can be run.
+#
+# A .ds program has no syntax for an action and is not getting one: the
+# pipeline is handed to a job, the job is run in a world, and the result is
+# read off the diagram. `out.collect()` is a line from a different program
+# shape, and the useful thing to do with it is to say so by name.
+#
+# So this table exists for the two refusals. `total = out.count()` is told
+# that an action does not make an RDD, and a bare `out.collect()` is told the
+# work happens at world.run(...). Neither would be possible if the names were
+# not written down somewhere.
+#
+# There was, until this comment, a third state: an `_act` function that
+# implemented most of these and that nothing could call. It advertised a
+# capability that could not be invoked, which is worse than either having the
+# feature or not — a differential run reads it as untested surface and goes
+# looking for behaviour that is not reachable. Deleted. If an action syntax is
+# ever wanted, it comes back with a way to write it, in one piece.
 ACTIONS = {"collect", "count", "first", "take", "reduce", "foreach",
            "saveAsTextFile", "countByKey", "collectAsMap", "sum", "mean",
            "max", "min", "takeOrdered"}
@@ -988,48 +1006,6 @@ def _apply(op: str, args: list, data: list, node, line: int,
     raise NotationError([Diagnostic(
         node.lineno + line - 1, node.col_offset + 1, "error",
         f"{op}() cannot be applied here")])
-
-
-def _act(op: str, args: list, data: list, node, line: int):
-    """Run an action and return its result."""
-    if op == "collect":
-        return list(data)
-    if op == "count":
-        return len(data)
-    if op == "first":
-        return data[0] if data else None
-    if op in ("take", "takeOrdered"):
-        n = args[0] if args else 1
-        ordered = sorted(data) if op == "takeOrdered" else data
-        return list(ordered[:int(n)])
-    if op == "sum":
-        return sum(data)
-    if op == "max":
-        return max(data) if data else None
-    if op == "min":
-        return min(data) if data else None
-    if op == "mean":
-        return sum(data) / len(data) if data else 0
-    if op == "reduce":
-        fn = args[0]
-        if not data:
-            return None
-        acc = data[0]
-        for nxt in data[1:]:
-            acc = fn(acc, nxt)
-        return acc
-    if op == "countByKey":
-        out: dict = {}
-        for k, _ in data:
-            out[k] = out.get(k, 0) + 1
-        return out
-    if op == "collectAsMap":
-        return dict(data)
-    if op in ("foreach", "saveAsTextFile"):
-        return None
-    raise NotationError([Diagnostic(
-        node.lineno + line - 1, node.col_offset + 1, "error",
-        f"{op}() is not an action this runs")])
 
 
 def resolve_input(name, inputs: dict, line: int) -> list:

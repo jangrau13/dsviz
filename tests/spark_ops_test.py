@@ -184,6 +184,24 @@ ok("but with the cluster's own chance it spreads, as a broken reducer should",
 # partition count is in the spread at two — 6.0 at 2 and 3 partitions, 8.625
 # at 4. The simulator is not showing a different world, it is showing several
 # of Spark's at once, from one cluster size.
+#
+# Two things about this that look alike and are not, because one of them is a
+# flaky test waiting to be written. Measured over 3000 runs per count:
+#
+#   what is asserted here — Spark's two answers are CONTAINED in the spread.
+#   Both are common: p(6.0) is .33-.39 and p(8.625) is .10-.24 at every count,
+#   so 60 samples miss one with probability .0000 at two partitions and .0020
+#   at four. Safe anywhere. It is at two because that is the smallest cluster
+#   that makes the point, not because the others would break.
+#
+#   what must NOT be asserted — that the spread has exactly N values. The full
+#   set saturates slowly: 5 values at two partitions, but 12 at three and 12
+#   at four, whose rarest members land 2-3% of the time. 60 runs misses one
+#   about a quarter of the time at three partitions. Pinning the count would
+#   be a test that fails for no reason one run in four.
+#
+# So "assert more of the spread, it is a stronger claim" is the tempting and
+# wrong change here — the same shape as "make the engines agree" above.
 SPARK_ANSWERS = {6.0, 8.625}
 ok("every answer Spark gives at any partition count is in the spread at two",
    SPARK_ANSWERS <= spread,

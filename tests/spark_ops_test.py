@@ -33,7 +33,10 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from dsviz.notation import NotationError
-from dsviz.pyspark import COMBINES, NARROW, WIDE, Budget, _apply
+import random
+
+from dsviz.pyspark import (COMBINES, NARROW, WIDE, Budget, _apply,
+                            _partition)
 
 failures = []
 
@@ -146,6 +149,39 @@ ok("a mutable zeroValue is per-partition, not shared",
 unrunnable = sorted(op for op in COMBINES if op not in ARGS)
 ok("every operator the cost model treats as combining is implemented",
    not unrunnable, ", ".join(unrunnable))
+
+
+# --- the one disagreement with Spark that is meant to be there -----------
+#
+# Spark assigns a key's values to partitions by where the source records
+# already were, so for a fixed input and partition count it answers the same
+# way every time — including from a reducer that has no right to one answer.
+# Measured: (a + b) / 2 over [1, 2, 9, 12] gives real Spark 6.0 at two
+# partitions, 6.0 at three, and 8.625 at four. Three answers to one question.
+#
+# The simulator draws the grouping fresh each run instead, so the spread is
+# visible from a single program rather than only to someone who thought to
+# vary the partition count. That is the whole reason the construct exists, so
+# it is asserted here: a differential run finding THIS disagreeing is correct,
+# and making it agree would delete the lesson.
+fixed = dict(apply("reduceByKey", [lambda a, b: (a + b) / 2],
+                   [("k", 1.0), ("k", 2.0), ("k", 9.0), ("k", 12.0)], 2))
+ok("a non-associative reducer is reproducible when nothing supplies chance",
+   fixed["k"] == 8.625, "" if fixed["k"] == 8.625 else str(fixed))
+
+spread = set()
+for seed in range(24):
+    acc = None
+    for bucket in _partition([1.0, 2.0, 9.0, 12.0], 2, random.Random(seed)):
+        value = bucket[0]
+        for nxt in bucket[1:]:
+            value = (value + nxt) / 2
+        acc = value if acc is None else (acc + value) / 2
+    spread.add(acc)
+ok("but with the cluster's own chance it spreads, as a broken reducer should",
+   len(spread) > 1, "" if len(spread) > 1 else f"one answer: {sorted(spread)}")
+ok("and Spark's own 6.0 is among the answers a student can see",
+   6.0 in spread, "" if 6.0 in spread else f"{sorted(spread)}")
 
 print()
 if failures:

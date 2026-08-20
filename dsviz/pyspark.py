@@ -583,6 +583,26 @@ def _partition(values: list, parts: int, rng) -> list:
     the input was read and shuffled, and the whole point is that a program may
     not depend on it. Seeded, so one run is reproducible while different seeds
     are different accidents.
+
+    **This is the one place the simulator knowingly differs from Spark, and it
+    differs on purpose.** Spark assigns a key's values to partitions by where
+    the source records already were, so for a fixed input and partition count
+    it gives the same grouping every time — and therefore the same answer,
+    even from a reducer that has no right to one. Measured, `(a + b) / 2` over
+    [1, 2, 9, 12]:
+
+        real Spark   2 partitions -> 6.0   3 -> 6.0   4 -> 8.625
+        simulator    a spread, 5.25 among them, different per seed
+
+    Spark's three answers to one question are the honest evidence that the
+    reducer is broken; a student who ran it once would see a stable number and
+    conclude it was fine. Drawing the grouping fresh each run turns "you
+    happened not to notice" into "you cannot help noticing". Matching Spark
+    record-for-record here would make the simulator agree with Spark and stop
+    teaching the thing Spark is being used to teach.
+
+    So a differential run *should* find this one disagreeing. It is the
+    deliberate one. Everything else should match.
     """
     if parts <= 1 or len(values) < 2 or rng is None:
         return [list(values)]

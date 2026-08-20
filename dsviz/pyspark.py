@@ -775,14 +775,18 @@ def _apply(op: str, args: list, data: list, node, line: int,
         # These are contiguous, which is what `parallelize` gives you and what
         # makes the result reproducible; the random split is kept for the
         # combining operators, where varying it is the lesson.
+        # Spark's own boundaries, which are `(i * n) // slices`. The rule
+        # matters here more than anywhere else: partition boundaries are the
+        # entire subject of this operator, so a student calling it to see what
+        # a partition holds must be shown the partition Spark would give them
+        # for the same parallelize. Handing out an even split with the
+        # remainder at the front instead put [3,1,4,1,5] into [[3,1,4],[1,5]]
+        # where Spark gives [[3,1],[4,1,5]] — same total, wrong subject.
         out = []
         n = max(1, min(partitions, len(data))) if data else 1
-        size, extra = divmod(len(data), n)
-        at = 0
+        total = len(data)
         for i in range(n):
-            take = size + (1 if i < extra else 0)
-            chunk = data[at:at + take]
-            at += take
+            chunk = data[(i * total) // n:((i + 1) * total) // n]
             budget.spend()
             produced = f(iter(chunk))
             out.extend(list(produced))

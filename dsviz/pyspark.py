@@ -1008,7 +1008,7 @@ def _apply(op: str, args: list, data: list, node, line: int,
         f"{op}() cannot be applied here")])
 
 
-def resolve_input(name, inputs: dict, line: int) -> list:
+def resolve_input(name, inputs: dict, line: int, whole: bool = False):
     """
     What `textFile("…")` reads.
 
@@ -1016,6 +1016,19 @@ def resolve_input(name, inputs: dict, line: int) -> list:
     pipeline can be re-run on input it has not seen — which is how a hand-in is
     graded. Only then is it looked for on disk, which is what lets a task ship
     a corpus next to itself.
+
+    **Blank lines are kept.** Spark's `textFile` yields one record per line
+    including the empty ones, and dropping them changed the answer to a word
+    count: the empty string came out with a count of 5 where Spark said 6.
+    Worse, the two paths through this function disagreed with each other — a
+    declared input kept its blank lines and a file on disk did not, so the same
+    program gave different answers depending on where the data came from.
+    Tidier task data is not worth a student's file counting differently here
+    than it would on a cluster.
+
+    With `whole=True` the file arrives as one string, newlines and all, which
+    is what `wholeTextFiles` means: the record is the file verbatim, so the
+    final byte belongs in it.
     """
     import pathlib as _pathlib
 
@@ -1023,6 +1036,9 @@ def resolve_input(name, inputs: dict, line: int) -> list:
     for candidate in (key, _pathlib.Path(key).stem):
         if candidate in inputs:
             value = inputs[candidate]
+            if whole:
+                return ("\n".join(value) if isinstance(value, list)
+                        else str(value))
             return list(value) if isinstance(value, list) else str(value).splitlines()
     # Data files belong to the exercise, not to dsviz: the package ships no
     # tasks, so where they live is whatever exercise was loaded. `TASKS` is
@@ -1032,7 +1048,8 @@ def resolve_input(name, inputs: dict, line: int) -> list:
     if assignment.TASKS is not None:
         path = assignment.TASKS / key
         if path.exists():
-            return [ln for ln in path.read_text().splitlines() if ln.strip()]
+            text = path.read_text()
+            return text if whole else text.splitlines()
     raise NotationError([Diagnostic(
         line, 1, "error", f"there is no input called {key!r}",
         hint="declare it, e.g. 'input rows: \"…\"', or name a file the task "
@@ -1137,8 +1154,8 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None,
                     # file arrives as one record, so it cannot be split across
                     # machines.
                     key = str(values[0]) if values else ""
-                    data = [(key, "\n".join(
-                        resolve_input(key, inputs, rdd.line)))]
+                    data = [(key, resolve_input(key, inputs, rdd.line,
+                                                whole=True))]
                 else:
                     data = resolve_input(values[0] if values else "",
                                          inputs, rdd.line)
@@ -1178,10 +1195,18 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None,
                               warnings=pipe.warnings, rng=rng,
                               partitions=partitions)
                 sizes = []
-                if op == "partitionBy" and values:
+                # partitionBy(numPartitions, partitionFunc). Only the
+                # function can say how big each partition comes out, and it is
+                # optional — Spark defaults to portable_hash, which is not
+                # reproducible here. With no function there is nothing to size
+                # with, so the step keeps the sizes it already had rather than
+                # inventing them. This read values[0] as the partitioner,
+                # which was true before the signature was corrected and became
+                # `TypeError: 'int' object is not callable` after.
+                if op == "partitionBy" and len(values) > 1 and callable(values[1]):
                     counts: dict = {}
                     for key, _ in data:
-                        where = values[0](key)
+                        where = values[1](key)
                         counts[where] = counts.get(where, 0) + 1
                     sizes = [counts[k] for k in sorted(counts)]
                 step = Step(name=name, op=op, parents=[parent.name], data=data,

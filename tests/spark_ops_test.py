@@ -245,6 +245,37 @@ ok("sample keeps everything at fraction 1.0",
 ok("sample can repeat a row with replacement",
    len(sampled(True, 2.0, [1, 2, 3], 1)) > 3)
 
+
+# --- what a source hands over ------------------------------------------
+#
+# textFile yields one record per line INCLUDING the empty ones, as Spark's
+# does. Dropping them changed the answer to a word count — the empty string
+# came out 5 where Spark said 6 — and the two paths through resolve_input
+# disagreed with each other, so the same program answered differently
+# depending on whether its data was declared or read from a file.
+from dsviz.pyspark import resolve_input  # noqa: E402
+
+DECLARED = {"rows": ["a", "", "b", "", ""]}
+rows = resolve_input("rows", DECLARED, 1)
+ok("textFile keeps blank lines, as Spark does", len(rows) == 5,
+   "" if len(rows) == 5 else str(rows))
+
+# wholeTextFiles hands over the file verbatim — that is the whole difference
+# from textFile, so the final newline belongs in the record.
+whole = resolve_input("rows", DECLARED, 1, whole=True)
+ok("wholeTextFiles gives one string, newlines and all",
+   whole == "a\n\nb\n\n", "" if whole == "a\n\nb\n\n" else repr(whole))
+
+# partitionBy's happy path, which the signature fix broke in the other place:
+# build() was still reading values[0] as the partitioner and raised
+# "'int' object is not callable" on the very form the fix had just allowed.
+ok("partitionBy(2) does not crash",
+   apply("partitionBy", [2], [("a", 1), ("b", 2), ("c", 3)]) ==
+   [("a", 1), ("b", 2), ("c", 3)])
+ok("partitionBy(2, func) is accepted too",
+   apply("partitionBy", [2, lambda k: len(k) % 2],
+         [("a", 1), ("bb", 2)]) == [("a", 1), ("bb", 2)])
+
 print()
 if failures:
     print(f"{len(failures)} SPARK OPERATOR CHECK(S) FAILED")

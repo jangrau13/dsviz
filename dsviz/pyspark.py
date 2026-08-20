@@ -1392,8 +1392,19 @@ def simulate(pipe: Pipeline, cluster, executors: list, *, lose: str = "",
                     cluster.note(f"nothing left alive to recompute {node} on")
                     break
             step = pipe.by_name(node)
-            machine.work(f"recompute {node}",
-                         duration=max(len(step.data) if step else 1, 1) * step_cost)
+            # Rebuilding an RDD is the same work as building it, and it
+            # parallelises the same way — so it is priced the same way, spread
+            # across whoever is still up. Charging the whole RDD to one
+            # machine made recovery cost more on a big cluster than on a small
+            # one: with the loss in place, a two-executor run finished later
+            # than a one-executor run (6.35 against 5.10) and the curve the
+            # report asks students to plot turned upward at exactly the point
+            # parallelism was supposed to start paying.
+            crew = [m for m in executors if m.up_at(m.clock)] or [machine]
+            share = (max(len(step.data) if step else 1, 1) * step_cost
+                     / len(crew))
+            for helper in crew:
+                helper.work(f"recompute {node}", duration=share)
 
     for rdd, op, result, line in pipe.actions:
         shown = result if not isinstance(result, list) else f"{len(result)} record(s)"

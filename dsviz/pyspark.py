@@ -523,6 +523,12 @@ class Pipeline:
     # is not associative is the one that matters: it makes this run look
     # reproducible when the real one is not.
     warnings: list = field(default_factory=list)
+    # `kept = real` binds a second name to a step rather than making one. The
+    # names have to be kept, or `lose=kept` finds nothing in the lineage and
+    # is quietly dropped — which is what happened, and it made a comparison
+    # between two runs look like a difference in caching when one of them was
+    # not losing anything at all.
+    aliases: dict = field(default_factory=dict)
 
     def by_name(self, name: str):
         for s in reversed(self.steps):
@@ -1110,6 +1116,27 @@ def build(rdds: list, inputs: dict, *, budget: Budget | None = None,
         return {name: list(step.data) for name, step in known.items()}
 
     for rdd in rdds:
+        # `kept = real` — one name for an RDD that already exists. No steps of
+        # its own, so it is not a transformation and must not be looked up as
+        # one: it is Python's ordinary name binding and it means what it means
+        # in PySpark.
+        #
+        # a2-kmeans step 2 tells the student to take the cache away. The line
+        # is `kept = real.cache()`, so taking the cache away leaves exactly
+        # this, and it used to fail with "unknown transformation 'source'" —
+        # naming an operation they never wrote, hinting at a list of operators
+        # none of which was the answer. The instruction produced an error
+        # message about something else.
+        if not rdd.steps and rdd.parents:
+            parent = known.get(rdd.parents[0])
+            if parent is None:
+                raise NotationError([Diagnostic(
+                    rdd.line, 1, "error", f"unknown RDD {rdd.parents[0]!r}",
+                    hint="defined so far: " + (", ".join(known) or "none"))])
+            known[rdd.var] = parent
+            pipe.aliases[rdd.var] = parent.name
+            continue
+
         steps = rdd.steps or [(rdd.op, [])]
         if rdd.parents:
             parent = known.get(rdd.parents[0])
@@ -1282,7 +1309,15 @@ def simulate(pipe: Pipeline, cluster, executors: list, *, lose: str = "",
                 break
             # Split across the executors: each takes a share, so a slow one
             # shows up as a straggler rather than being averaged away.
-            duration = max(len(step.data), 1) * step_cost / len(crew)
+            #
+            # `cache()` is the exception: it computes nothing. It marks an RDD
+            # to be kept, and `_apply` returns the input untouched. Charging
+            # it a full pass made caching *cost* a pass — in a2-kmeans, 5.40
+            # of work for three executors to each do nothing — and the task
+            # asks the student to take the cache away and find that a round
+            # costs more without it. It cost less.
+            duration = (0.0 if step.op in ("cache", "persist")
+                        else max(len(step.data), 1) * step_cost / len(crew))
             for machine in crew:
                 machine.work(f"{step.name} ({step.op})", duration=duration)
                 if not machine.alive:
@@ -1364,6 +1399,7 @@ def simulate(pipe: Pipeline, cluster, executors: list, *, lose: str = "",
             lost.append((str(lose), holder.name))
 
     for name, who in lost:
+        name = pipe.aliases.get(name, name)
         if name not in lineage.g:
             cluster.note(f"there is no step called {name!r} to lose")
             continue

@@ -246,8 +246,45 @@ class Lineage:
         return name
 
     def recompute_set(self, lost: str) -> list[str]:
-        """Everything that must be recomputed to rebuild `lost`, in order."""
+        """Everything that must be recomputed to rebuild `lost`, in order.
+
+        The ancestors, because an RDD that is not held anywhere is made again
+        from what made it. This is the right answer for a step that was never
+        kept — an uncached RDD read by two branches really does replay its
+        whole ancestry for the second reader.
+
+        It is the wrong answer for a partition that was *lost*: see
+        `rebuild_set`.
+        """
         needed = nx.ancestors(self.g, lost) | {lost}
+        return [n for n in nx.topological_sort(self.g) if n in needed]
+
+    def rebuild_set(self, lost: str) -> list[str]:
+        """Everything that must be recomputed because `lost` was lost.
+
+        The step itself and everything derived from it — not its ancestors.
+        Those did not go anywhere: one partition was lost, and its parents are
+        still sitting on live executors, so the rebuild starts from them.
+        What cannot survive is the lost step and every step already computed
+        from it.
+
+        Using the ancestors here inverted the lesson Assignment 2 is built on.
+        Measured on the telemetry pipeline before this existed, losing each
+        step of readings → parsed → byMonth → together → deltas → swing:
+
+            lose=swing    (last)   410.40
+            lose=together          406.80
+            lose=parsed            298.80
+            lose=readings (first)  234.00
+            lose nothing at all    234.00
+
+        Losing the first step of a six-step pipeline cost exactly what losing
+        nothing cost, and the task asks the student to observe the opposite.
+        The earlier a step sits the more descendants it has, which is why this
+        set — and not the other one — makes the cost of a loss the size of
+        what depended on it.
+        """
+        needed = nx.descendants(self.g, lost) | {lost}
         return [n for n in nx.topological_sort(self.g) if n in needed]
 
     def stages(self) -> list[list[str]]:

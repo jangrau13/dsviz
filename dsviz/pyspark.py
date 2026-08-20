@@ -1370,7 +1370,13 @@ def simulate(pipe: Pipeline, cluster, executors: list, *, lose: str = "",
         machine = cluster.machines.get(who) or executors[0]
         if machine.alive:
             machine.crash(at=machine.clock, lose_state=True)
-        needed = lineage.recompute_set(name)
+        # What a loss costs is what depended on it. The ancestors are still
+        # on live executors — only this partition went — so the rebuild starts
+        # from them and runs forward through everything already derived from
+        # the lost data. Replaying the ancestors instead made an early loss
+        # the cheap one and losing the source of a pipeline free, which is the
+        # opposite of what Assignment 2 asks the student to observe.
+        needed = lineage.rebuild_set(name)
         cluster.note(f"lost {name} — recomputing {' → '.join(needed)} "
                      f"from lineage, not from disk")
         if machine.on_crash == "restart":

@@ -77,17 +77,12 @@ WORDS = ('lines = textFile("rows")\n'
          'counts = pairs.reduceByKey(lambda a, b: a + b)\n')
 
 
-# --- 1. a recomputation replays exactly what rebuilding needs -----------
+# --- 1. a replay is ordered, and stops at what the loss reached ---------
 #
-# The whole argument for writing a lineage down is that a lost partition is
-# rebuilt from its ancestors rather than reloaded from disk. If the engine
-# replayed the wrong set — too few and the rebuild is a lie, too many and the
-# cost of a loss is overstated — the diagram would still look right.
-#
-# `Lineage.recompute_set` is documented as "everything that must be
-# recomputed to rebuild `lost`", which is the ancestors and the step itself.
-# That is what is asserted here, and see the note under property 3 for the
-# claim it does NOT support.
+# The whole argument for writing a lineage down is that what is lost is rebuilt
+# from the graph rather than reloaded from disk. If the engine replayed the
+# wrong set — too few and the rebuild is a lie, too many and the cost of a loss
+# is overstated — the diagram would still look right.
 lost = run(WORDS + "job = Spark(pipeline=counts, lose=pairs)\n"
            "world.run(job)")
 replay = [n for n in lost["notes"] if "recomputing" in n]
@@ -95,13 +90,10 @@ ok("losing a step says what is recomputed", bool(replay),
    "" if replay else str(lost["notes"]))
 if replay:
     named = replay[0].split("recomputing")[-1]
-    ok("the replay names the lost step and everything it was made from",
-       all(n in named for n in ("lines", "words", "pairs")), named.strip())
-    ok("and stops there — what the loss did not destroy is not rebuilt",
-       "counts" not in named, named.strip())
+    ok("the replay names the lost step and everything derived from it",
+       "pairs" in named and "counts" in named, named.strip())
     ok("in dependency order, so the replay could actually be performed",
-       named.index("lines") < named.index("words") < named.index("pairs"),
-       named.strip())
+       named.index("pairs") < named.index("counts"), named.strip())
 
 
 # --- 2. a cached RDD is not rebuilt for its second reader ----------------
@@ -133,45 +125,55 @@ ok("the run says why, so the diagram can be read",
    any("cached" in n for n in cached["notes"]), str(cached["notes"]))
 
 
-# --- 3. a loss costs more the more there is to rebuild ------------------
+# --- 3. losing an earlier step costs more than losing a later one -------
 #
-# Measured, losing each step of the same four-step pipeline in turn:
+# The claim Assignment 2 is built on, and the one the engine used to get
+# exactly backwards. Task 1 step 3 tells the student to lose an earlier step
+# and see how much more has to be rebuilt; Task 2 step 3 asks them to compare
+# losing the grouped step with losing the one before it. Both are worth marks.
 #
-#     lose=lines   3.20   replays lines
-#     lose=words   3.65   replays lines → words
-#     lose=pairs   5.00   replays lines → words → pairs
-#     lose=counts  6.35   replays lines → words → pairs → counts
+# Until 2026-08-20 a loss replayed the lost step's ANCESTORS, so the ordering
+# was inverted and losing the source of a six-step pipeline cost exactly what
+# losing nothing cost — 234.00 either way on the telemetry task. A student
+# following the instructions and measuring carefully wrote down the opposite
+# of the lesson, and the more carefully they measured the more confidently
+# wrong they ended up.
 #
-# Monotonic in the length of the ancestry, which is the engine being
-# self-consistent: `lose=` is applied once the pipeline has been built, so
-# what a loss costs is what it takes to rebuild that one RDD.
+# What a loss actually costs is what depended on it: the ancestors are still
+# on live executors, so the rebuild starts from them and runs forward through
+# everything already derived from the lost data.
 #
-# OPEN QUESTION, deliberately not asserted either way. a2-wordcount and
-# a2-telemetry both tell the student the opposite — "losing `pairs` instead of
-# `counts` rebuilds more, because everything downstream of it has to be made
-# again. The cost of a loss is the size of its descendants, not of the step
-# itself." Against this engine that is false: an earlier loss is the cheap one.
-#
-# Both readings are defensible and they answer different questions. Ancestors
-# is what it costs to rebuild a lost RDD after the job is done. Ancestors plus
-# descendants is what it costs when the partition is lost *during* the job and
-# the final answer is still wanted — which is the Spark situation the exercise
-# describes, and the one that makes caching an early step worth doing.
-#
-# Whichever way it is settled, the engine and the two solution notes must stop
-# disagreeing: a student following the note sees the opposite and has to decide
-# whether to disbelieve the tool or themselves. Asserted here only in the
-# direction that holds today, so this suite records the behaviour without
-# blessing it.
-costs = {}
-for step in ("lines", "words", "pairs", "counts"):
-    costs[step] = run(WORDS + f"job = Spark(pipeline=counts, lose={step})\n"
-                      "world.run(job)")["makespan"]
-ok("a loss costs strictly more the longer the ancestry it must replay",
-   costs["lines"] < costs["words"] < costs["pairs"] < costs["counts"],
+# Asserted on fault_cost rather than makespan deliberately. fault_cost is the
+# metric that measures exactly this, and makespan carries crash and restart
+# placement noise that can put two adjacent steps out of order without the
+# lesson being wrong.
+def fault_cost(step: str) -> float:
+    result = runtime.evaluate(program(
+        WORDS + f"job = Spark(pipeline=counts, lose={step})\nworld.run(job)"))
+    return result["metrics"]["fault_cost"]["p50"]
+
+
+costs = {s: fault_cost(s) for s in ("counts", "pairs", "words", "lines")}
+ok("losing an earlier step costs more than losing a later one",
+   costs["counts"] < costs["pairs"] < costs["words"] < costs["lines"],
    ", ".join(f"{k}={v:.2f}" for k, v in costs.items()))
-ok("and losing anything costs something",
-   min(costs.values()) > 0, str(costs))
+
+# The specific failure that gave it away: a loss at the source was free.
+nothing = runtime.evaluate(program(
+    WORDS + "job = Spark(pipeline=counts)\nworld.run(job)")
+)["metrics"]["fault_cost"]["p50"]
+ok("losing the first step is not free", costs["lines"] > nothing,
+   f"lose=lines {costs['lines']:.2f} vs losing nothing {nothing:.2f}")
+
+# And the replay names the descendants, not the ancestors.
+told = [n for n in run(WORDS + "job = Spark(pipeline=counts, lose=words)\n"
+                       "world.run(job)")["notes"] if "recomputing" in n]
+if told:
+    named = told[0].split("recomputing")[-1]
+    ok("the replay names what was derived from the lost step",
+       "pairs" in named and "counts" in named, named.strip())
+    ok("and not what it was derived from, which never went anywhere",
+       "lines" not in named, named.strip())
 
 
 # --- 4. filtering before a shuffle moves fewer records ------------------

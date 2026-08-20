@@ -48,6 +48,7 @@ intersection branches, and `_check_associative`.
 from __future__ import annotations
 
 import ast
+import copy
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -665,16 +666,72 @@ def _apply(op: str, args: list, data: list, node, line: int,
         other = fn
         return list(data) + list(other if isinstance(other, list) else [])
 
-    if op in ("reduceByKey", "foldByKey"):
-        f = need_fn()
+    # --- the four combining operators, which are one operator ------------
+    #
+    # reduceByKey, foldByKey, aggregateByKey and combineByKey differ only in
+    # where each partition's accumulator starts and whether the function that
+    # folds a value in is the same one that merges two partitions. Spark's
+    # signatures say so:
+    #
+    #   reduceByKey(func)                     start at the first value
+    #   foldByKey(zeroValue, func)            start at zeroValue
+    #   aggregateByKey(zero, seqFunc, comb)   start at zero, merge differently
+    #   combineByKey(create, merge, mergeC)   start at create(first value)
+    #
+    # Writing them as one branch is not tidying: it is what makes the shape
+    # visible. Every one of them reduces inside a partition and then merges
+    # across partitions, which is the reason a combining operator is cheap and
+    # the reason its function has to be associative and commutative.
+    if op in COMBINES:
+        def want(shape: str, seeds: int = 0):
+            """Insist on Spark's own signature, and say it when it is missing.
+
+            A student who copies the operator out of the Spark documentation
+            must not be told they got it wrong. The previous code read the
+            *first* argument as the function for every combining operator, so
+            `foldByKey(0, lambda a, b: a + b)` — which is exactly what Spark
+            takes — was rejected as "needs a function", while the form that
+            works nowhere but here was accepted.
+            """
+            # `seeds` is how many leading arguments are values rather than
+            # functions — the zeroValue that foldByKey and aggregateByKey
+            # start each partition from. Everything after them must be
+            # callable, and there must be exactly as many arguments as the
+            # signature names.
+            wanted = shape.count(",") + 1
+            if (len(args) != wanted
+                    or not all(callable(a) for a in args[seeds:])):
+                raise NotationError([Diagnostic(
+                    node.lineno + line - 1, node.col_offset + 1, "error",
+                    f"{op}() takes {shape}",
+                    hint=f"write it as {op}({shape})")])
+
+        if op == "reduceByKey":
+            want("func")
+            init, seq, comb = None, args[0], args[0]
+        elif op == "foldByKey":
+            want("zeroValue, func", seeds=1)
+            init, seq, comb = args[0], args[1], args[1]
+        elif op == "aggregateByKey":
+            want("zeroValue, seqFunc, combFunc", seeds=1)
+            init, seq, comb = args[0], args[1], args[2]
+        else:                                   # combineByKey
+            want("createCombiner, mergeValue, mergeCombiners")
+            init, seq, comb = args[0], args[1], args[2]
+
         order, collected = [], {}
         for k, v in pairs():
             if k not in collected:
                 collected[k] = []
                 order.append(k)
             collected[k].append(v)
-        if warnings is not None:
-            problem = _check_associative(f, collected, order, node, line, budget)
+
+        # Only where the accumulator and the value are the same thing. For
+        # aggregateByKey and combineByKey the merge runs on accumulators, so
+        # feeding it raw values would invent a complaint about a function that
+        # is never called that way.
+        if warnings is not None and op in ("reduceByKey", "foldByKey"):
+            problem = _check_associative(comb, collected, order, node, line, budget)
             if problem:
                 warnings.append(Diagnostic(
                     line, 1, "warning", problem,
@@ -682,8 +739,9 @@ def _apply(op: str, args: list, data: list, node, line: int,
                          "so a reducer has to give the same answer whatever "
                          "the order and grouping. A mean is sum divided by "
                          "count, not a fold of halves."))
+
         # Each partition reduces what it holds, then the partial results are
-        # combined — which is what Spark does, and why a reducer that is not
+        # merged — which is what Spark does, and why a reducer that is not
         # associative and commutative has no single answer. Folding the whole
         # list left-to-right hid that: the simulator was reproducible where a
         # cluster is not, so a wrong reducer looked right.
@@ -691,16 +749,43 @@ def _apply(op: str, args: list, data: list, node, line: int,
         for k in order:
             partials = []
             for bucket in _partition(collected[k], partitions, rng):
-                acc = bucket[0]
-                for nxt in bucket[1:]:
+                if op == "reduceByKey":
+                    acc, rest = bucket[0], bucket[1:]
+                elif op == "combineByKey":
+                    acc, rest = init(bucket[0]), bucket[1:]
+                else:
+                    # A zero shared between partitions must not be a zero they
+                    # can each write into.
+                    acc, rest = copy.deepcopy(init), bucket
+                for nxt in rest:
                     budget.spend()
-                    acc = f(acc, nxt)
+                    acc = seq(acc, nxt)
                 partials.append(acc)
             acc = partials[0]
             for nxt in partials[1:]:
                 budget.spend()
-                acc = f(acc, nxt)
+                acc = comb(acc, nxt)
             out.append((k, acc))
+        return out
+
+    if op == "mapPartitions":
+        f = need_fn()
+        # The whole point of the operator is that the function sees a
+        # partition rather than a record, so the partitions have to be real.
+        # These are contiguous, which is what `parallelize` gives you and what
+        # makes the result reproducible; the random split is kept for the
+        # combining operators, where varying it is the lesson.
+        out = []
+        n = max(1, min(partitions, len(data))) if data else 1
+        size, extra = divmod(len(data), n)
+        at = 0
+        for i in range(n):
+            take = size + (1 if i < extra else 0)
+            chunk = data[at:at + take]
+            at += take
+            budget.spend()
+            produced = f(iter(chunk))
+            out.extend(list(produced))
         return out
 
     if op == "groupByKey":

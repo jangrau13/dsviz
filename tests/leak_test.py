@@ -58,18 +58,37 @@ SHIPPED = [
     (HERE / "docs", "*.md"),
     (HERE / "site", "*.txt"),          # llms.txt / llms-full.txt
 ]
-STUDENT_REPO = HERE.parent / "spikey-dsl-1" / "app"
-if STUDENT_REPO.is_dir():
-    SHIPPED += [(STUDENT_REPO / "dsviz", "*.py"),
-                (STUDENT_REPO, "*.js"),
-                (STUDENT_REPO / "docs", "*.txt")]
+# There was a second list here, for a vendored copy of all of this in the
+# student repository. The vendoring is gone: the wheel copies `dsviz/`, `web/`
+# and `site/` inside the package verbatim, and all three are checked above, so
+# the source is the whole shipped surface. It was a path that no longer existed
+# guarded by `is_dir()`, which meant it silently checked nothing.
 
 files = []
+by_root = {}
 for root, glob in SHIPPED:
     if root.is_dir():
-        files += [f for f in root.rglob(glob) if "__pycache__" not in f.parts]
+        found = [f for f in root.rglob(glob) if "__pycache__" not in f.parts]
+        by_root[f"{root.name}/{glob}"] = len(found)
+        files += found
 
 ok("there are files to check", bool(files), f"{len(files)} found")
+
+# A leak check gets easier to pass as there is less to scan, and it says
+# nothing when that happens: it reported 100 files one morning and 39 the same
+# afternoon, passed both times, and the drop was only noticed by eye. Most of
+# that fall was deliberate — the tasks moved out to the exercises — but a
+# deliberate fall and an accidental one look identical from in here.
+#
+# So the count is pinned. Two ways, because a single total can be held up by
+# one fat directory while another quietly empties:
+FLOOR = 30
+ok(f"at least {FLOOR} shipped files are scanned", len(files) >= FLOOR,
+   f"{len(files)} — either something stopped shipping or SHIPPED stopped "
+   f"finding it; lower the floor in the commit that removes the files"
+   if len(files) < FLOOR else f"{len(files)}")
+for where, n in sorted(by_root.items()):
+    ok(f"{where} still has files to scan", n > 0, f"{n}")
 
 for pattern, what in ANSWERS:
     hits = []

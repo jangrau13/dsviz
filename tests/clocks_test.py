@@ -40,9 +40,9 @@ CHAIN = '''@process
 class Node:
     pass
 
-p1 = Node(speed=1.0)
-p2 = Node(speed=1.0)
-p3 = Node(speed=1.0)
+p1 = Node(type="m1.small")
+p2 = Node(type="m1.small")
+p3 = Node(type="m1.small")
 
 world = World(machines=[p1, p2, p3])
 
@@ -97,9 +97,9 @@ CHAT = '''@process
 class Node:
     pass
 
-p1 = Node(speed=1.0)
-p2 = Node(speed=1.0)
-p3 = Node(speed=1.0)
+p1 = Node(type="m1.small")
+p2 = Node(type="m1.small")
+p3 = Node(type="m1.small")
 
 world = World(machines=[p1, p2, p3])
 

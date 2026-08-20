@@ -25,7 +25,7 @@ class Ledger:
     def balance(account: string) -> int:
         return 120
 
-bank = Ledger(speed=1.0, error_rate=0.4)
+bank = Ledger(type="m1.small", error_rate=0.4)
 world = World(machines=[bank])
 
 def story() -> void:
@@ -39,21 +39,16 @@ RELIABLE = UNRELIABLE.replace("error_rate=0.4", "error_rate=0.0")
 
 MAPREDUCE = """split doc1: "the cat sat on the mat"
 
-@mapper
+@machine
 class W:
     pass
 
-@reducer
-class C:
-    pass
+m1 = W(type="m1.small")
+m2 = W(type="m1.small")
+world = World(machines=[m1, m2])
 
-m1 = W(speed=1.0)
-r1 = C(speed=1.0)
-world = World(machines=[m1, r1])
-
-def tok(key: string, value: string) -> void:
-    for word: string in split(value):
-        emit(lower(word), 1)
+def tok(key: string, value: string) -> [pair]:
+    return [(lower(word), 1) for word: string in split(value)]
 
 def total(key: string, values: [int]) -> int:
     return sum(values)
@@ -61,7 +56,7 @@ def total(key: string, values: [int]) -> int:
 def owner(key: string, reducers: int) -> int:
     return hash(key) mod reducers
 
-job = MapReduce(map=tok, reduce=total, partition=owner)
+job = MapReduce(map=tok, reduce=total, partition=owner, partitions=2)
 world.run(job)
 """
 
@@ -114,7 +109,7 @@ class Ledger:
     def balance(account: string) -> int:
         return 120
 
-bank = Ledger(speed=1.0, error_rate=0.5, on_crash=%s, restart_after=0.5)
+bank = Ledger(type="m1.small", error_rate=0.5, on_crash=%s, restart_after=0.5)
 world = World(machines=[bank])
 
 def story() -> void:
@@ -143,8 +138,8 @@ print(f"ok   stay_dead {dead.get('ok', 0)}/40 succeed, "
       f"restart {back.get('ok', 0)}/40 — same rate, same retries")
 
 MR_FLAKY = MAPREDUCE.replace(
-    "m1 = W(speed=1.0)",
-    'm1 = W(speed=1.0, error_rate=0.5, on_crash=%s, restart_after=1.0)')
+    'm1 = W(type="m1.small")',
+    'm1 = W(type="m1.small", error_rate=0.5, on_crash=%s, restart_after=1.0)')
 
 print("\n=== a mapreduce job can fail at all, and its answer depends on this ===")
 complete = incomplete = 0
@@ -207,8 +202,8 @@ class Rates:
     def to_euros(amount: int) -> int:
         return amount * 2
 
-bank = Ledger(speed=1.0)
-fx = Rates(speed=1.0)
+bank = Ledger(type="m1.small")
+fx = Rates(type="m1.small")
 world = World(machines=[bank, fx])
 
 def story() -> void:

@@ -34,7 +34,6 @@ start: _NL* (statement _NL*)*
           | assign
           | action
           | assertion
-          | budget
           | note
           | lose
 
@@ -60,9 +59,12 @@ kwarg: NAME "=" expr
 
 // --- configuration -------------------------------------------------
 config: CONFIG_KEY NUMBER            -> config
-      | NAME KW_SPEED NUMBER         -> speed
       | KW_COMBINER ONOFF            -> combiner
-CONFIG_KEY.5: /(?:mappers|reducers|executors|partitions|capacity)\b/
+// `machines` is deliberately absent: it is a keyword argument on
+// `World(machines=[...])`, and the world is where the machines are
+// declared anyway, so a count here would only be a second answer to
+// a question already answered.
+CONFIG_KEY.5: /(?:executors|partitions|capacity)\b/
 ONOFF.5: /(?:on|off)\b/
 
 use_decl: KW_USE NAME
@@ -86,7 +88,7 @@ func_def: KW_DEF NAME "(" [params] ")" "->" TYPE ":" _NL+ _INDENT (stmt | _NL)+ 
 params: param ("," param)*
 param: NAME ":" TYPE
 TYPE.7: /(?:int|string|\[int\]|\[string\]|\[pair\]|pair|void)/
-?stmt: for_stmt | if_stmt | with_stmt | emit_stmt | let_stmt | return_stmt | expr_stmt
+?stmt: for_stmt | if_stmt | with_stmt | let_stmt | return_stmt | expr_stmt
 return_stmt: KW_RETURN expr _NL
 let_stmt: NAME ":" TYPE "=" expr _NL
 for_stmt: KW_FOR NAME ":" TYPE KW_IN expr ":" _NL+ _INDENT (stmt | _NL)+ _DEDENT
@@ -97,7 +99,6 @@ if_stmt: KW_IF expr ":" _NL+ _INDENT (stmt | _NL)+ _DEDENT
 // say which context managers exist, instead of the parser saying only
 // that the line is wrong.
 with_stmt: KW_WITH NAME "(" [args] ")" ":" _NL+ _INDENT (stmt | _NL)+ _DEDENT
-emit_stmt: KW_EMIT "(" expr "," expr ")" _NL
 expr_stmt: expr _NL
 
 // --- RDD pipelines --------------------------------------------------
@@ -118,7 +119,6 @@ assertion: KW_ASSERT NAME "." KW_CLOCK "==" vector    -> assert_clock
          | KW_ASSERT NAME "->>" NAME                  -> assert_before
          | KW_EXPECT ATOMIC "=" NUMBER                -> expect
 vector: "[" [NUMBER ("," NUMBER)*] "]"
-budget: KW_BUDGET NAME COMPARE NUMBER
 COMPARE: "<=" | ">=" | "<" | ">"
 lose: KW_LOSE NAME [KW_ON NAME]
 note: KW_NOTE /[^\n]+/
@@ -138,7 +138,13 @@ MUL_OP: "*" | "/" | "mod"
      | NAME "." NAME "(" [args] ")" -> remote_call
      | NAME "(" [args] ")" -> func_call
      | NAME              -> var
+     // `[(city, 1) for city: string in stops]` — one element out of the
+     // list for each element in, and the loop variable carries its type
+     // here for the same reason it does in a `for` statement: nothing in
+     // this language is inferred.
+     | "[" expr KW_FOR NAME ":" TYPE KW_IN expr "]" -> comprehension
      | "[" [expr ("," expr)*] "]" -> list_lit
+     | "(" expr "," expr ")" -> pair_lit
      | "(" expr ")"
 ATOMIC.-1: /[A-Za-z0-9_.\-]+/   // lowest priority: a catch-all payload token
 
@@ -147,18 +153,15 @@ KW_INPUT.6: /input\b/
 KW_SPLIT.6: /split\b/
 KW_ASSERT.6: /assert\b/
 KW_EXPECT.6: /expect\b/
-KW_BUDGET.6: /budget\b/
 KW_NOTE.6: /note\b/
 KW_LOSE.6: /lose\b/
 KW_ON.6: /on\b/
-KW_SPEED.6: /speed\b/
 KW_COMBINER.6: /combiner\b/
 KW_CLOCK.6: /clock\b/
 KW_FOR.6: /for\b/
 KW_IN.6: /in\b/
 KW_IF.6: /if\b/
 KW_WITH.6: /with\b/
-KW_EMIT.6: /emit\b/
 KW_PROCESS.6: /process\b/
 KW_EVENT.6: /event\b/
 KW_DEF.6: /def\b/

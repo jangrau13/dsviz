@@ -3,7 +3,7 @@ from dsviz import map_reduce, VectorClockRun
 from dsviz.shapes import dataflow, spacetime, gantt, color_for
 
 c = map_reduce({"doc1":"the cat sat","doc2":"the dog ran","doc3":"the cat ran"},
-               speeds={"mapper-2":0.35})
+               speeds={"machine-2":0.35})
 tr = c.sorted_trace()
 df, gt = dataflow(tr,title="MapReduce"), gantt(tr,title="Stragglers")
 print("dataflow shapes:", len(df), "| kinds:", sorted({s.kind for s in df}))

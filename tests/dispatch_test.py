@@ -22,7 +22,7 @@ class Ledger:
     def balance(account: string) -> int:
         return 1
 
-bank = Ledger(speed=1.0)
+bank = Ledger(type="m1.small")
 
 @machine
 class App:
@@ -42,9 +42,8 @@ world.run(job)
 
 MAPREDUCE = """split doc1: "the cat sat"
 
-def tokenize(key: string, value: string) -> void:
-    for word: string in split(value):
-        emit(word, 1)
+def tokenize(key: string, value: string) -> [pair]:
+    return [(word, 1) for word: string in split(value)]
 
 def total(key: string, values: [int]) -> int:
     return sum(values)
@@ -52,20 +51,16 @@ def total(key: string, values: [int]) -> int:
 def byKey(key: string, n: int) -> int:
     return hash(key) mod n
 
-@mapper
+@machine
 class Worker:
     pass
 
-@reducer
-class Collector:
-    pass
+m1 = Worker(type="m1.small")
+m2 = Worker(type="m1.small")
 
-m1 = Worker(speed=1.0)
-r1 = Collector(speed=1.0)
+world = World(machines=[m1, m2])
 
-world = World(machines=[m1, r1])
-
-job = MapReduce(map=tokenize, reduce=total, partition=byKey)
+job = MapReduce(map=tokenize, reduce=total, partition=byKey, partitions=2)
 world.run(job)
 """
 

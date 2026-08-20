@@ -403,6 +403,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../machines-you-can-buy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machines you can buy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../worlds/" class="md-nav__link">
         
   
@@ -502,10 +530,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#job-mapreducemapf-reduceg-partitionh" class="md-nav__link">
+  <a href="#job-mapreducemapf-reduceg-partitionh-partitionsn" class="md-nav__link">
     <span class="md-ellipsis">
       
-        job = MapReduce(map=f, reduce=g, partition=h)
+        job = MapReduce(map=f, reduce=g, partition=h, partitions=N)
       
     </span>
   </a>
@@ -689,10 +717,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#job-mapreducemapf-reduceg-partitionh" class="md-nav__link">
+  <a href="#job-mapreducemapf-reduceg-partitionh-partitionsn" class="md-nav__link">
     <span class="md-ellipsis">
       
-        job = MapReduce(map=f, reduce=g, partition=h)
+        job = MapReduce(map=f, reduce=g, partition=h, partitions=N)
       
     </span>
   </a>
@@ -738,10 +766,11 @@
 <span class="n">job</span> <span class="o">=</span> <span class="n">Calls</span><span class="p">(</span><span class="n">run</span><span class="o">=</span><span class="n">story</span><span class="p">)</span>
 <span class="n">world</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">job</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="job-mapreducemapf-reduceg-partitionh"><code>job = MapReduce(map=f, reduce=g, partition=h)</code><a class="headerlink" href="#job-mapreducemapf-reduceg-partitionh" title="Permanent link">&para;</a></h3>
+<h3 id="job-mapreducemapf-reduceg-partitionh-partitionsn"><code>job = MapReduce(map=f, reduce=g, partition=h, partitions=N)</code><a class="headerlink" href="#job-mapreducemapf-reduceg-partitionh-partitionsn" title="Permanent link">&para;</a></h3>
 <p>Wire your functions into a job.</p>
 <p>A function is the mapper because it was passed as the mapper, and it is accepted there only if its signature fits. Its name has no say in it. <code>combine=</code> adds a combiner.</p>
-<div class="highlight"><pre><span></span><code><span class="n">job</span> <span class="o">=</span> <span class="n">MapReduce</span><span class="p">(</span><span class="nb">map</span><span class="o">=</span><span class="n">readSensor</span><span class="p">,</span> <span class="n">reduce</span><span class="o">=</span><span class="n">hottest</span><span class="p">,</span> <span class="n">partition</span><span class="o">=</span><span class="n">spread</span><span class="p">)</span>
+<p><code>partitions=N</code> says how many ways the keys are split. It is the <code>N</code> your partitioner is handed, and it is not the number of machines: every machine maps, and after the shuffle N of them are each handed a partition to fold. Ask for two partitions in a world of five machines and three of them do no folding at all.</p>
+<div class="highlight"><pre><span></span><code><span class="n">job</span> <span class="o">=</span> <span class="n">MapReduce</span><span class="p">(</span><span class="nb">map</span><span class="o">=</span><span class="n">readSensor</span><span class="p">,</span> <span class="n">reduce</span><span class="o">=</span><span class="n">hottest</span><span class="p">,</span> <span class="n">partition</span><span class="o">=</span><span class="n">spread</span><span class="p">,</span> <span class="n">partitions</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="job-timesn"><code>Job(..., times=N)</code><a class="headerlink" href="#job-timesn" title="Permanent link">&para;</a></h3>
 <p>How many rounds the job runs.</p>

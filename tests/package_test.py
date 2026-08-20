@@ -62,7 +62,7 @@ from dsviz import attest                                        # noqa: E402
 
 unstampable, too_easy = [], []
 for name, spec in ASSIGNMENTS.items():
-    asks_for_work = bool(spec.expects or spec.requires or spec.budgets)
+    asks_for_work = bool(spec.expects or spec.requires)
     try:
         attest.stamp(name, spec.starter)
         if asks_for_work:

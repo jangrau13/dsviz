@@ -4,7 +4,7 @@ The runtime: one program, one interpreter.
 There is no MapReduce language, no RPC language and no Spark language. There is
 one language — decorated classes holding typed functions — and a small table
 saying what each decorator *means* to the simulator. `@machine` is one that
-answers and makes calls; `@mapper` and `@reducer` are the halves of a job. Nothing about the
+answers and makes calls, and a job decides what it does. Nothing about the
 grammar, the checker or this interpreter changes when a new exercise is added:
 only the table does.
 
@@ -22,7 +22,7 @@ import json
 
 from .core import Cluster, Event
 from .notation import Diagnostic, NotationError
-from .syntax import LIFECYCLE, MACHINE_SETTINGS, lint
+from .syntax import LIFECYCLE, lint, machine_settings
 
 
 # What a decorator means. `role` is what the machine is drawn and scheduled as;
@@ -34,10 +34,6 @@ MACHINE_KINDS = {
     # separate "client": something that only makes calls is still a machine,
     # and having both words only invited the question of which to use.
     "machine": {"role": "machine", "serves": True},
-    # The MapReduce halves keep their own names, because a job has to know
-    # which machines are mappers and which are reducers.
-    "mapper":  {"role": "mapper", "serves": True},
-    "reducer": {"role": "reducer", "serves": True},
     "process": {"role": "process", "serves": True},
 }
 
@@ -254,14 +250,12 @@ def build(source: str, *, name: str = "cluster", seed: int | None = None) -> Clu
 
     for inst, cls in built:
         kind = MACHINE_KINDS[cls.kind]
-        # The instance settings win: the class may give a default speed, but
-        # `slow = Worker(speed=0.3)` is the machine that actually runs. How it
-        # fails travels with it the same way — how likely, and what it does
-        # afterwards, are both properties of this machine.
+        # The instance settings win: the class may name a default type, but
+        # `slow = Worker(type="t1.small")` is the machine that actually runs.
+        # How it fails travels with it the same way — how likely, and what it
+        # does afterwards, are both properties of this machine.
         declared = cls.decorator(cls.kind).args
-        settings = {}
-        for key, (default, cast) in MACHINE_SETTINGS.items():
-            settings[key] = cast(inst.settings.get(key, declared.get(key, default)))
+        settings = machine_settings(inst.settings, declared)
         # What this machine starts out remembering. The class says which
         # fields exist, because that is what makes it this kind of machine;
         # the instance may start any of them somewhere else, so two ledgers

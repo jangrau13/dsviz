@@ -2,42 +2,46 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://jangrau13.github.io/dsviz/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/builtins/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/checks/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/datasets/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/functions/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/jobs/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
+    </url>
+    <url>
+         <loc>https://jangrau13.github.io/dsviz/language/machines-you-can-buy/</loc>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/machines/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/messages/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
     <url>
          <loc>https://jangrau13.github.io/dsviz/language/worlds/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-20</lastmod>
     </url>
 </urlset>

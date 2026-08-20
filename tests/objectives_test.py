@@ -61,7 +61,7 @@ for name, spec in ASSIGNMENTS.items():
     for g in spec.goals:
         assert g in GOALS, f"{name} references unknown objective {g!r}"
     levels = {GOALS[g]["level"] for g in spec.goals}
-    if spec.expects or spec.budgets:          # a graded task
+    if spec.expects:                          # a graded task
         assert levels & {"apply", "analyse", "evaluate", "create"}, (
             f"{name} only asks students to remember or understand: {levels}")
     print(f"ok {name}: {len(spec.goals)} objective(s), levels {sorted(levels)}")

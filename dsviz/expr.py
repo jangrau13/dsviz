@@ -198,14 +198,13 @@ IF_RE = re.compile(r"^if\s+(?P<cond>.+?)\s*:\s*$")
 # is a matter of timing, which is the simulator's to decide; here it is
 # only something that must not be mistaken for a value.
 WITH_RE = re.compile(r"^with\s+(?P<what>\w+)\s*\(\s*\)\s*:\s*$")
-EMIT_RE = re.compile(r"^emit\s*\(\s*(?P<key>.+?)\s*,\s*(?P<value>.+?)\s*\)\s*$")
 
 class TypeVar:
     """
     A type the program fixes, rather than one the language fixes.
 
-    MapReduce is not word count. A crawler emits (url, source) and reduces a
-    list of urls; an inverted index emits (term, docid). Only the *key* is
+    MapReduce is not word count. A crawler makes (url, source) pairs and
+    reduces a list of urls; an index makes (term, docid). Only the *key* is
     forced to string — the partitioner hashes it — while the value type is
     whatever the job is about.
 
@@ -279,7 +278,7 @@ def unify(pattern, actual: str, bound: dict) -> str | None:
 
     Returns None on success, or a human-readable conflict. The first
     annotation to mention V decides it; every later one is held to it, so
-    `map` emitting a string and `reduce` taking `[int]` is caught as the
+    `map` making string pairs and `reduce` taking `[int]` is caught as the
     disagreement it is rather than passing silently.
     """
     if isinstance(pattern, TypeVar):
@@ -308,15 +307,15 @@ def show(pattern, bound: dict) -> str:
     return str(pattern)
 
 
-# How many parameters each function takes, and what a student may emit.
+# How many parameters each function takes, and what its pairs may carry.
 SIGNATURES = {
     # name: (param names, param types, return type, what it does)
     #
     # V is bound by whichever annotation mentions it first. Writing
     #     def reduce(key: string, values: [string]) -> string
-    # says this job carries strings, and emit and combine are then held to it.
-    "map":       (["key", "value"], [VType.STR, VType.STR], VType.VOID,
-                  "emits pairs"),
+    # says this job carries strings, and map and combine are then held to it.
+    "map":       (["key", "value"], [VType.STR, VType.STR], VType.LIST_PAIR,
+                  "returns pairs"),
     "reduce":    (["key", "values"], [VType.STR, ListOf(V)], V,
                   "returns one value"),
     "partition": (["key", "n"], [VType.STR, VType.INT], VType.INT,
@@ -451,7 +450,7 @@ def parse_functions(source: str) -> tuple[dict[str, Func], list[Diagnostic]]:
         if current is not None:
             current.body.append((indent, text, i))
 
-    # What V resolved to, so the emit check and the runtime agree with the
+    # What V resolved to, so the pair check and the runtime agree with the
     # signatures rather than assuming a count.
     for f in funcs.values():
         f.value_type = bound.get("V", VType.ANY)
@@ -475,6 +474,42 @@ def infer(expr: str, scope: dict, line: int, diags: list) -> str:
     e = expr.strip()
     if not e:
         return VType.ANY
+
+    # `[ELT for NAME: TYPE in ITER]` — checked before anything else, because
+    # ELT may hold operators that the arithmetic and comparison cases below
+    # would otherwise claim first.
+    comp = as_comprehension(e)
+    if comp is not None:
+        elt, var, vtype, iterable = comp
+        over = infer(iterable, scope, line, diags)
+        if over != VType.ANY and over not in VType.LISTS:
+            diags.append(Diagnostic(
+                line, 1, "error",
+                f"a comprehension runs over a list, and this is {over}",
+                hint="the part after `in` has to be a list"))
+        else:
+            holds = elem_type(over)
+            if not compatible(holds, vtype):
+                diags.append(Diagnostic(
+                    line, 1, "error",
+                    f"{var} is written {vtype}, but this list holds {holds}",
+                    hint=f"write `{var}: {holds}` or run over a list of {vtype}"))
+        return LIST_OF.get(infer(elt, {**scope, var: vtype}, line, diags),
+                           VType.ANY)
+
+    # `(key, value)` — a pair, and the only thing a two-part bracket can be.
+    halves = as_pair(e)
+    if halves is not None:
+        for half in halves:
+            infer(half, scope, line, diags)
+        return VType.PAIR
+
+    # a list written out: `[1, 2]`, `[(w, 1)]`
+    if _wraps(e, "[", "]"):
+        items = _split_args(e[1:-1])
+        if not items:
+            return VType.LIST_INT
+        return LIST_OF.get(infer(items[0], scope, line, diags), VType.ANY)
 
     # literals
     if re.fullmatch(r"-?\d+", e):
@@ -575,21 +610,130 @@ def infer(expr: str, scope: dict, line: int, diags: list) -> str:
 
 
 def _split_args(s: str) -> list:
-    """Split on top-level commas only, so nested calls stay intact."""
+    """Split on top-level commas only, so nested calls and lists stay intact."""
     args, depth, cur = [], 0, ""
     for ch in s:
         if ch == "," and depth == 0:
             args.append(cur)
             cur = ""
             continue
-        if ch == "(":
+        if ch in "([":
             depth += 1
-        elif ch == ")":
+        elif ch in ")]":
             depth -= 1
         cur += ch
     if cur.strip():
         args.append(cur)
     return args
+
+
+def _scan(s: str, token: str) -> int | None:
+    """Where `token` appears in `s` at bracket depth zero, or None."""
+    depth, i, in_str = 0, 0, False
+    while i < len(s):
+        ch = s[i]
+        if ch == '"':
+            in_str = not in_str
+        elif not in_str:
+            if ch in "([":
+                depth += 1
+            elif ch in ")]":
+                depth -= 1
+            elif depth == 0 and s.startswith(token, i):
+                return i
+        i += 1
+    return None
+
+
+def _wraps(s: str, open_ch: str, close_ch: str) -> bool:
+    """Whether the opening bracket at the start is closed by the last one."""
+    if not (s.startswith(open_ch) and s.endswith(close_ch)):
+        return False
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return i == len(s) - 1
+    return False
+
+
+def as_pair(e: str) -> list | None:
+    """`(key, value)` as its two halves, or None if this is not a pair."""
+    s = e.strip()
+    if not _wraps(s, "(", ")"):
+        return None
+    parts = _split_args(s[1:-1])
+    return parts if len(parts) == 2 else None
+
+
+COMP_TAIL_RE = re.compile(
+    r"^\s*(?P<var>\w+)\s*:\s*(?P<vtype>\[?\w+\]?)\s+in\s+(?P<iter>.+)$", re.S)
+
+
+def as_comprehension(e: str) -> tuple | None:
+    """
+    `[ELT for NAME: TYPE in ITER]` as its four parts, or None.
+
+    Split on its own brackets rather than by one regex, because ITER may be a
+    list literal and a regex ending at the first `]` would stop too early.
+
+    Parsed here rather than in the AST walker on purpose. The walker refuses
+    every comprehension node and must keep doing so — an untyped
+    `[x for x in [1, 2]]` is one of the escapes `sandbox_test` requires to be
+    blocked, and the annotation is the only thing that tells a student's loop
+    apart from a reach into the object graph. Requiring the type is also the
+    same rule the rest of the language follows: the loop variable in a `for`
+    statement is written down too, and nothing is inferred.
+    """
+    s = e.strip()
+    if not _wraps(s, "[", "]"):
+        return None
+    inner = s[1:-1]
+    at = _scan(inner, " for ")
+    if at is None:
+        return None
+    m = COMP_TAIL_RE.match(inner[at + len(" for "):])
+    if not m:
+        return None
+    return (inner[:at].strip(), m.group("var"),
+            m.group("vtype"), m.group("iter").strip())
+
+
+# The list type that holds a given element type.
+LIST_OF = {VType.INT: VType.LIST_INT, VType.STR: VType.LIST_STR,
+           VType.PAIR: VType.LIST_PAIR}
+
+
+def pair_value_type(e: str, scope: dict, line: int) -> str:
+    """
+    What the value half of the pairs in `e` is, or ANY when it cannot be told.
+
+    Read back off the written expression rather than off its type, because
+    `[pair]` says a list of pairs and not what those pairs carry. Recovering it
+    is what lets a job refuse a map that hands counts to a reducer declared to
+    take documents.
+
+    Diagnostics are dropped on the floor here: every part of this expression
+    has already been checked by `infer` on the same line, and reporting it
+    twice would say the same thing twice.
+    """
+    s = e.strip()
+    comp = as_comprehension(s)
+    if comp is not None:
+        elt, var, vtype, _ = comp
+        scope = {**scope, var: vtype}
+    elif _wraps(s, "[", "]"):
+        items = _split_args(s[1:-1])
+        if not items:
+            return VType.ANY
+        elt = items[0]
+    else:
+        return VType.ANY
+    halves = as_pair(elt)
+    return infer(halves[1], scope, line, []) if halves else VType.ANY
 
 
 # Helper functions in scope while checking. Set by `check_functions` so that
@@ -611,7 +755,7 @@ def check_functions(funcs: dict, mapper: str | None = None) -> list[Diagnostic]:
 
     for fn in funcs.values():
         scope = dict(zip(fn.params, fn.types or [VType.ANY] * len(fn.params)))
-        emits = 0
+        returns = 0
         last_type = VType.VOID
 
         for indent, text, line in fn.body:
@@ -679,41 +823,18 @@ def check_functions(funcs: dict, mapper: str | None = None) -> list[Diagnostic]:
                         line, 1, "error",
                         f"{fn.name} returns {fn.ret}, but this value is {got}",
                         hint="the returned value must match the declared type"))
+                if fn.name == "map":
+                    returns += 1
+                    want = getattr(fn, "value_type", VType.ANY)
+                    carries = pair_value_type(m.group("value"), scope, line)
+                    if not compatible(carries, want):
+                        diags.append(Diagnostic(
+                            line, 1, "error",
+                            f"a pair here carries {carries}, but this job's "
+                            f"pairs carry {want}",
+                            hint=f"this job's reduce takes [{want}], so map "
+                                 f"must produce ({VType.STR}, {want}) pairs"))
                 last_type = got
-                continue
-
-            m = EMIT_RE.match(text)
-            if m:
-                emits += 1
-                # Emitting belongs to whichever function was passed as the
-                # mapper — not to one that happens to be spelled `map`. When no
-                # job has been wired up yet there is nothing to check against,
-                # so this stays quiet rather than guessing.
-                #
-                # It also stays quiet when the job names a mapper that does not
-                # exist. "this job's mapper is typoHere, not perDocument" is
-                # true and useless: the mistake is the typo, and saying so is
-                # another check's job — one that reports it on the line the
-                # name was written rather than here on the emit.
-                if (mapper is not None and fn.name != mapper
-                        and mapper in funcs):
-                    described = (SIGNATURES[fn.name][3]
-                                 if fn.name in SIGNATURES
-                                 else "is not this job's mapper")
-                    diags.append(Diagnostic(
-                        line, 1, "error",
-                        f"only the mapper may emit, and this job's mapper is "
-                        f"{mapper}, not {fn.name}",
-                        hint=f"{fn.name} {described}"))
-                infer(m.group("key"), scope, line, diags)
-                vt = infer(m.group("value"), scope, line, diags)
-                want = getattr(fn, "value_type", VType.ANY)
-                if not compatible(vt, want):
-                    diags.append(Diagnostic(
-                        line, 1, "error",
-                        f"emit expects a {want} value, got {vt}",
-                        hint=f"this job's reduce takes [{want}], so map must "
-                             f"emit {want}"))
                 continue
 
             last_type = infer(text, scope, line, diags)
@@ -723,7 +844,7 @@ def check_functions(funcs: dict, mapper: str | None = None) -> list[Diagnostic]:
         # Compare against what V resolved to, not the variable itself.
         if isinstance(want_ret, TypeVar):
             want_ret = getattr(fn, "value_type", VType.ANY)
-        if fn.name != "map" and want_ret != VType.VOID \
+        if want_ret != VType.VOID \
                 and last_type != VType.ANY \
                 and not compatible(last_type, want_ret):
             diags.append(Diagnostic(
@@ -732,11 +853,11 @@ def check_functions(funcs: dict, mapper: str | None = None) -> list[Diagnostic]:
                 f"is {last_type}",
                 hint=f"the last line of {fn.name} is its result")) 
 
-        if fn.name == "map" and emits == 0:
+        if fn.name == "map" and returns == 0:
             diags.append(Diagnostic(
-                fn.line, 1, "warning", "map never emits anything",
-                hint="use emit(key, value); a map that emits nothing "
-                     "produces an empty result"))
+                fn.line, 1, "warning", "map never returns any pairs",
+                hint="a map answers with the pairs it made from one record, "
+                     "and a map that returns none produces an empty result"))
     return diags
 
 
@@ -789,6 +910,23 @@ def _eval_expr(expr: str, env: dict, line: int, budget: Budget):
     stay that way — do not add nodes that expose attribute or item access.
     """
     budget.spend()
+
+    # A comprehension is run here, by hand, and never reaches `ast.parse`.
+    # The walker below has no comprehension node and must have none: an
+    # untyped `[x for x in [1, 2]]` has to stay blocked, and it is the written
+    # type that separates a student's loop from a reach into the object graph.
+    comp = as_comprehension(expr)
+    if comp is not None:
+        elt, var, _vtype, iterable = comp
+        seq = _eval_expr(iterable, env, line, budget)
+        if not isinstance(seq, (list, tuple)):
+            raise NotationError([Diagnostic(
+                line, 1, "error",
+                f"cannot run a comprehension over {type(seq).__name__}",
+                hint="the part after `in` has to be a list")])
+        return [_eval_expr(elt, {**env, var: item}, line, budget)
+                for item in seq]
+
     py = re.sub(r"\bmod\b", "%", expr)
     names = {name: impl for name, (_, _, impl, _) in BUILTINS.items()}
     # A student's own function is callable from anywhere, like Python.
@@ -910,16 +1048,13 @@ def bind_helpers(funcs: dict) -> None:
 
 
 def run_function(fn: Func, args: dict, budget: Budget,
-                 *, collect_emits: bool = False, state: dict | None = None
-                 ) -> Any:
+                 *, state: dict | None = None) -> Any:
     """
     Execute one student function.
 
-    Returns the pairs it emitted when `collect_emits` is asked for, otherwise
-    the value of its final expression. The caller says which it wants, because
-    only the caller knows what position the function was passed in — this used
-    to be decided by testing whether the function was *named* `map`, which
-    stopped working the moment students chose their own names.
+    Returns the value of its final expression, whatever position it was passed
+    in. A mapper is not a special case here: its pairs are that value, a list
+    of them, exactly as its signature says.
 
     `state` is what the machine running this method remembers. A name it holds
     reads as its current value and a binding to that name writes through to
@@ -929,7 +1064,6 @@ def run_function(fn: Func, args: dict, budget: Budget,
     rather than by anything written at the assignment — which is why the
     checker refuses a parameter that shadows a field.
     """
-    emitted: list[tuple] = []
     result = None
     env = dict(args)
     held = state if state is not None else {}
@@ -989,19 +1123,11 @@ def run_function(fn: Func, args: dict, budget: Budget,
                 result = _eval_expr(m.group("value"), visible(env), line, budget)
                 return
 
-            m = EMIT_RE.match(text)
-            if m:
-                emitted.append(
-                    (_eval_expr(m.group("key"), visible(env), line, budget),
-                     _eval_expr(m.group("value"), visible(env), line, budget)))
-                i += 1
-                continue
-
             result = _eval_expr(text, visible(env), line, budget)
             i += 1
 
     execute(fn.body, env)
-    return emitted if collect_emits else result
+    return result
 
 
 def _block(body, i, indent):

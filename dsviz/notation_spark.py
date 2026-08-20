@@ -54,7 +54,6 @@ RULES_SPARK = [
     ("lose",     re.compile(r"^lose\s+(?P<rdd>\w+)(?:\s+on\s+(?P<who>[\w-]+))?$", re.I)),
     ("speed",    re.compile(r"^(?P<who>[\w-]+)\s+speed\s+(?P<v>[\d.]+)$", re.I)),
     ("expect",   re.compile(r"^expect\s+(?P<key>\S+)\s*=\s*(?P<count>\d+)$", re.I)),
-    ("budget",   re.compile(r"^budget\s+(?P<metric>\w+)\s*(?P<op><|<=|>|>=)\s*(?P<value>[\d.]+)$", re.I)),
     ("note",     re.compile(r"^note\s+(?P<text>.+)$", re.I)),
 ]
 
@@ -233,7 +232,7 @@ def _apply(op: str, arg: str, data: list, budget: Budget, line: int) -> list:
 
 
 def build_spark(source: str, *, seed: int | None = None):
-    """Run a Spark program. Returns (cluster, lineage, results, expects, budgets)."""
+    """Run a Spark program. Returns (cluster, lineage, results, expects)."""
     diags = [d for d in lint_spark(source) if d.severity == "error"]
     if diags:
         raise NotationError(diags)
@@ -245,7 +244,7 @@ def build_spark(source: str, *, seed: int | None = None):
     lineage = Lineage()
     n_exec, n_part = 2, 2
     speeds: dict[str, float] = {}
-    losses, expects, budgets, notes = [], [], [], []
+    losses, expects, notes = [], [], []
     stage_of: dict[str, int] = {}
     stage = 0
 
@@ -262,8 +261,6 @@ def build_spark(source: str, *, seed: int | None = None):
             inputs[g["name"]] = parts
         elif kind == "expect":
             expects.append((g["key"], int(g["count"]), line))
-        elif kind == "budget":
-            budgets.append((g["metric"].lower(), g["op"], float(g["value"]), line))
         elif kind == "lose":
             losses.append((g["rdd"], g.get("who"), line))
         elif kind == "note":
@@ -384,4 +381,4 @@ def build_spark(source: str, *, seed: int | None = None):
     for text in notes:
         c.note(text)
 
-    return c, lineage, rdds, expects, budgets
+    return c, lineage, rdds, expects

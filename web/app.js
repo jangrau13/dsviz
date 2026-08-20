@@ -110,8 +110,10 @@ async function boot() {
   // points. A module added to the package and not to this list is a page that
   // loads to an ImportError, which no Python suite can see.
   const modules = ["__init__", "values", "core", "patterns", "types",
+                   "machine_types",
                    "expr", "grammar", "syntax", "runtime", "project",
                    "notation", "notation_mr", "notation_spark", "pyspark", "metrics",
+                   "pricing",
                    "contest", "shapes", "assignment", "langserver"];
   pyodide.FS.mkdirTree("/home/pyodide/dsviz");
   for (const name of modules) {
@@ -123,8 +125,8 @@ async function boot() {
   }
   await pyodide.runPythonAsync(
     `import sys; sys.path.insert(0, "/home/pyodide")\n` +
-    "from dsviz.langserver import (analyse, analyse_project, budget_metrics,\n" +
-    "                              completions, hover, reference)");
+    "from dsviz.langserver import (analyse, analyse_project, completions,\n" +
+    "                              hover, reference)");
 
   // The editor's words come from the same table the documentation site is
   // generated from, so a keyword cannot be in one and missing from the
@@ -133,9 +135,9 @@ async function boot() {
   const pyCompletions = pyodide.globals.get("completions");
   const pyHover = pyodide.globals.get("hover");
   const byDialect = new Map();
-  let budgets = null;
   useLanguageService({
-    // Filtered to the exercise, so a Spark task is not offered `emit`.
+    // Filtered to the exercise, so a Spark task is not offered a MapReduce
+    // form it has no use for.
     completions: () => {
       const dialect = $("dialect").textContent || "";
       if (!byDialect.has(dialect)) {
@@ -144,10 +146,6 @@ async function boot() {
       return byDialect.get(dialect);
     },
     hover: (word) => JSON.parse(pyHover(word)),
-    budgets: () => {
-      if (!budgets) budgets = JSON.parse(pyodide.globals.get("budget_metrics")());
-      return budgets;
-    },
   });
 
   await pyodide.runPythonAsync(
@@ -615,16 +613,18 @@ async function run() {
 /*
  * Where the student is, and what to do next.
  *
- * The four steps in the header are the whole loop: write, run, meet the
- * budgets, hand in. Which one is current is read off the last analysis rather
- * than tracked, so it stays right when the student jumps around.
+ * The four steps in the header are the whole loop: write, run, improve, hand
+ * in. Which one is current is read off the last analysis rather than tracked,
+ * so it stays right when the student jumps around.
+ *
+ * `improve` means the design loses money on the scenario it is loaded
+ * against: a gradient rather than a line, and one that never blocks a hand-in.
+ * Without a scenario `result.pnl` is absent and the step does not fire.
  */
 function journeyFrom(result) {
   const errors = (result.diagnostics || []).filter((d) => d.severity === "error");
   if (errors.length || !result.frame) return "write";
-  const budgets = result.metrics || [];
-  const missed = budgets.filter((m) => m.limit != null && m.value > m.limit);
-  if (missed.length) return "improve";
+  if (result.pnl && result.pnl.profit < 0) return "improve";
   return result.verdict === "AC" ? "handin" : "run";
 }
 
@@ -648,13 +648,11 @@ function nextStep(result) {
     return { text: "write your functions, wire them into a job, and run it",
              tone: "" };
   }
-  const missed = (result.metrics || [])
-    .filter((m) => m.limit != null && m.value > m.limit);
-  if (missed.length) {
-    const m = missed[0];
-    return { text: `${m.label ?? m.key} is ${m.value}${m.unit ?? ""}, over the `
-                   + `budget of ${m.limit}${m.unit ?? ""}. Hover it to see why.`,
-             tone: "warn" };
+  if (result.pnl && result.pnl.profit < 0) {
+    const p = result.pnl;
+    return { text: `this design loses ${p.currency} ${Math.abs(p.profit)
+                    .toLocaleString()} on ${p.scenario}. Open the account to `
+                   + "see which line took it.", tone: "warn" };
   }
   if (result.verdict === "AC") {
     return { text: "this passes on the input you can see. Hand in to run it "

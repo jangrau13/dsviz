@@ -32,7 +32,7 @@ print("\n=== the digest is of the run, not of the text ===")
 # Same code twice must agree, or CI would reject honest submissions at random.
 assert attest.trace_sha(SOLUTION, TASK) == attest.trace_sha(SOLUTION, TASK)
 # Different code must disagree, or the digest would attest to nothing.
-other = SOLUTION.replace("m2 = Till(speed=1.0)", "m2 = Till(speed=0.2)")
+other = SOLUTION.replace('m2 = Till(type="m1.small")', 'm2 = Till(type="t1.small")')
 assert other != SOLUTION
 assert attest.trace_sha(other, TASK) != attest.trace_sha(SOLUTION, TASK)
 print("ok — reproducible for the same code, different for different code")

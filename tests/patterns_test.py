@@ -3,14 +3,14 @@ from dsviz import map_reduce, Lineage, spark_job, VectorClockRun
 
 print("=== MapReduce ===")
 c = map_reduce({"doc1":"the cat sat","doc2":"the dog ran","doc3":"the cat ran"},
-               partitions=2, capacity=4, speeds={"mapper-2":0.4})
+               partitions=2, capacity=4, speeds={"machine-2":0.4})
 out = sorted((e.detail["key"], e.detail["value"]) for e in c.trace.of_kind("output"))
 print("output:", out)
 assert dict(out)=={"the":3,"cat":2,"ran":2,"sat":1,"dog":1}, "word counts wrong"
-print("straggler mapper-2 finished at:", c.machines["mapper-2"].clock)
+print("straggler mapper-2 finished at:", c.machines["machine-2"].clock)
 
 print("\n=== MapReduce with a crash ===")
-c2 = map_reduce({"doc1":"the cat sat","doc2":"the dog ran"}, crash=("mapper-2", 0.5))
+c2 = map_reduce({"doc1":"the cat sat","doc2":"the dog ran"}, crash=("machine-2", 0.5))
 print("drops:", len(c2.trace.of_kind("drop")), "| crash events:", len(c2.trace.of_kind("crash")))
 assert c2.trace.of_kind("crash"), "crash must be recorded"
 

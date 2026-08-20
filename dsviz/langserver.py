@@ -35,6 +35,11 @@ def detect_dialect(source: str) -> str:
     # tasks as RPC and offered their editors the wrong completions.
     if re.search(r"\b(textFile|parallelize)\s*\(|\bSpark\s*\(", source, re.M):
         return SPARK
+    # And for the same reason, a MapReduce job is what makes a program a
+    # MapReduce program. Its machines are declared `@machine` like every other
+    # kind, so the job has to be asked about before the machines are.
+    if re.search(r"\bMapReduce\s*\(", source, re.M):
+        return MAPREDUCE
     if re.search(r"^\s*@machine\b", source, re.M):
         return RPC
     if re.search(r"^\s*@process\b|\.clock\s*==|\->>", source, re.M):
@@ -80,9 +85,10 @@ DOCS: list[SymbolDoc] = [
     # --- describing the system ---
     SymbolDoc("class", "@kind\nclass Name:", "A kind of machine.",
               "The decorator says what the class is to the simulator. "
-              "@machine both answers calls and makes them, @mapper and "
-              "@reducer are the two halves of a job, and @process carries a "
-              "clock. A class is only a kind of machine. What runs is an "
+              "@machine both answers calls and makes them, and @process "
+              "carries a clock. A machine is a machine: which half of a job "
+              "it does is the job's to decide, the same way a master hands "
+              "out tasks. A class is only a kind of machine. What runs is an "
               "instance of it.",
               (MAPREDUCE, SPARK, RPC, CLOCKS),
               "@machine\nclass Ledger:\n"
@@ -205,10 +211,21 @@ DOCS: list[SymbolDoc] = [
               (MAPREDUCE, SPARK, RPC, CLOCKS),
               "@duration(0.4)\ndef balance(account: string) -> int:\n"
               "    return 120"),
-    SymbolDoc("speed", "Kind(speed=N)", "Relative speed of one machine.",
-              "1.0 is nominal and 0.25 takes four times as long. This is "
-              "how you make a straggler.",
-              (MAPREDUCE, SPARK, RPC, CLOCKS), "slow = Worker(speed=0.25)"),
+    SymbolDoc("type", 'Kind(type="m1.small")', "Which machine to buy.",
+              "A machine is not built to order: there is a catalogue, you "
+              "pick a type off it, and the machine arrives with the processor "
+              "and the room that type comes with. `m1.small` is the ordinary "
+              "one and what you get if you say nothing.\n\n"
+              "The letter says what it is built for. `c` has the processor, "
+              "for work that is slow because there is a lot of it. `r` has "
+              "the room, for a machine handed more than it can hold — that "
+              "one does not get better with a faster processor. `m` is the "
+              "middle of both and `t` is the cheap one, which is how you make "
+              "a straggler.\n\n"
+              "Each type is drawn in its own colour, so a fleet of mixed "
+              "machines reads as mixed at a glance.\n\n```\n  t1.small   0.3x  room 8   cheap and slow\n  m1.small     1x  room 16  the ordinary machine, and what to reach for first\n  m1.large     2x  room 32  twice the processor and twice the room\n  c1.large     4x  room 16  four times the processor, ordinary room\n  r1.large     1x  room 96  ordinary processor, six times the room\n```",
+              (MAPREDUCE, SPARK, RPC, CLOCKS),
+              'slow = Worker(type="t1.small")'),
     SymbolDoc("crash", "machine.crash()", "Take a machine down.",
               "Everything it remembers goes back to the value it started at, "
               "whatever it had been counted up to since, and messages already "
@@ -270,10 +287,28 @@ DOCS: list[SymbolDoc] = [
               "        if reading > top:\n"
               "            top: int = reading\n"
               "    return top"),
-    SymbolDoc("emit", "emit(key, value)", "Produce one intermediate pair.",
-              "Only the function passed as the job's map may emit. The key "
-              "chooses a reducer by its hash, and the value is whatever the "
-              "reducer takes.", (MAPREDUCE,), "emit(city, reading)"),
+    SymbolDoc("comprehension", "[element for name: type in list]",
+              "One element out for each element in.",
+              "How a function that has to produce many things produces them. "
+              "A map is handed one record and answers with every pair it made "
+              "from it, which may be none, one, or thousands — so it answers "
+              "with a list, and this is how that list is built.\n\n"
+              "Read it right to left: take each `reading` out of "
+              "`split(payload)`, and for each one put a pair into the list. "
+              "The loop variable carries its type for the same reason it does "
+              "in a `for` statement: nothing here is inferred.",
+              (MAPREDUCE,),
+              "def perStation(station: string, payload: string) -> [pair]:\n"
+              "    return [(station, reading) "
+              "for reading: string in split(payload)]"),
+    SymbolDoc("pair", "(key, value)",
+              "The two halves of one intermediate result.",
+              "What a map answers with a list of. The key decides which "
+              "partition it goes to, and the value is whatever the reducer "
+              "takes — a count, a document name, anything the job is about. "
+              "A list of them is written `[pair]`, which is what a map "
+              "declares as its return type.",
+              (MAPREDUCE,), "(station, reading)"),
     SymbolDoc("Calls", "job = Calls(run=f)", "A job that is a sequence of calls.",
               "The work is one function, and the job is that function run "
               "in the world. Nothing has to be wrapped in a machine to hold "
@@ -283,14 +318,21 @@ DOCS: list[SymbolDoc] = [
               "def story() -> void:\n"
               '    chf: int = bank.balance("savings")\n\n'
               "job = Calls(run=story)\nworld.run(job)"),
-    SymbolDoc("MapReduce", "job = MapReduce(map=f, reduce=g, partition=h)",
+    SymbolDoc("MapReduce",
+              "job = MapReduce(map=f, reduce=g, partition=h, partitions=N)",
               "Wire your functions into a job.",
               "A function is the mapper because it was passed as the "
               "mapper, and it is accepted there only if its signature fits. "
-              "Its name has no say in it. `combine=` adds a combiner.",
+              "Its name has no say in it. `combine=` adds a combiner.\n\n"
+              "`partitions=N` says how many ways the keys are split. It is "
+              "the `N` your partitioner is handed, and it is not the number "
+              "of machines: every machine maps, and after the shuffle N of "
+              "them are each handed a partition to fold. Ask for two "
+              "partitions in a world of five machines and three of them do "
+              "no folding at all.",
               (MAPREDUCE,),
               "job = MapReduce(map=readSensor, reduce=hottest, "
-              "partition=spread)"),
+              "partition=spread, partitions=2)"),
 
     # --- calling across the network ---
     SymbolDoc("call", "machine.method(arg [, deadline=T] [, retries=N])",
@@ -302,11 +344,6 @@ DOCS: list[SymbolDoc] = [
               'chf: int = bank.balance("savings", deadline=0.5, retries=2)'),
 
     # --- checks the exercise sets ---
-    SymbolDoc("budget", "budget METRIC < N", "A non-functional limit.",
-              "Correctness is the floor. Budgets are what separate a good "
-              "design from one that merely works. The metrics are network, "
-              "makespan, imbalance, tail, memory and faults.",
-              (MAPREDUCE, SPARK), "budget network < 40"),
     SymbolDoc("expect", "expect KEY = N", "Assert a final count.",
               "The correctness check.", (MAPREDUCE, SPARK), "expect zurich = 3"),
     SymbolDoc("note", "note TEXT", "A caption on the diagram.",
@@ -395,10 +432,10 @@ DOCS: list[SymbolDoc] = [
 # describe the language differently.
 GROUPS = [
     ("functions", "Functions", "What you write, and how it is written.",
-     ["def", "emit", "parallel"]),
+     ["def", "comprehension", "pair", "parallel"]),
     ("machines", "Machines",
      "Declaring a kind of machine, and making ones that exist.",
-     ["class", "instance", "state", "update", "starts", "speed", "duration",
+     ["class", "instance", "state", "update", "starts", "type", "duration",
       "error_rate", "on_crash", "restart_after", "crash", "restart", "call"]),
     ("worlds", "Worlds",
      "The machines that exist together, and running in them.",
@@ -414,7 +451,7 @@ GROUPS = [
       "reduceByKey", "groupByKey", "sortByKey", "distinct", "join",
       "partitionBy", "cache", "Spark"]),
     ("checks", "Checks", "Statements that assert something about a run.",
-     ["budget", "expect", "assert", "note"]),
+     ["expect", "assert", "note"]),
 ]
 
 DOC_INDEX = {d.name: d for d in DOCS}
@@ -613,7 +650,7 @@ def analyse(source: str, assignment: str = "") -> str:
 
     When `assignment` is given, the student's code is run inside that
     assignment's setup and judged against its criteria — which may include
-    hidden tests. Students never write their own `expect` or `budget`.
+    hidden tests. Students never write their own `expect`.
 
     Returns JSON: diagnostics, the diagram, metrics and a verdict.
     """
@@ -727,7 +764,7 @@ def _analyse_dialect(source: str, dialect: str, result: Analysis) -> Analysis:
         result.diagnostics = [d.to_json() for d in diags]
         if any(d.severity == "error" for d in diags):
             return result
-        cluster, expects, budgets = build_mr(source)
+        cluster, expects = build_mr(source)
         result.verdict = judge_mr(source).to_json()
         result.outputs = {e.detail["key"]: e.detail["value"]
                           for e in cluster.trace.of_kind("output")}
@@ -792,22 +829,6 @@ def hover(word: str) -> str:
     if d:
         return json.dumps(d.to_json())
     return json.dumps({})
-
-
-def budget_metrics() -> str:
-    """
-    What a `budget` line may be written about, and what each one measures.
-
-    The editor offers these after `budget ` and explains one on hover. They
-    are the names the checker reads — `network`, not `network_msgs` — because
-    the name a student writes is the one that has to be right.
-    """
-    from .metrics import EXPLANATIONS
-    from .notation_mr import BUDGET_METRICS
-
-    return json.dumps({
-        name: (EXPLANATIONS.get(key, (human,))[0] or human)
-        for name, (key, human) in BUDGET_METRICS.items()})
 
 
 def reference() -> str:

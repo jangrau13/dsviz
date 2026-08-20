@@ -2,9 +2,19 @@
 Assignments: the criteria a submission is judged against.
 
 Students write map, reduce and partition. They do *not* write their own tests —
-`expect` and `budget` belong to the assignment, are set by the lecturer, and
-may be hidden. A student who writes their own passing criteria has not been
-assessed.
+`expect` belongs to the assignment, is set by the lecturer, and may be hidden.
+A student who writes their own passing criteria has not been assessed.
+
+A task is judged on whether it works, and on nothing else. A design lesson
+that correctness cannot see goes in a `Requirement`, which names the property
+and can fail: a partitioner that sends every key to one machine, a map that
+puts the same pair on the wire twice. Nothing non-functional is scored against
+a threshold, because a threshold can only say that 41 is worse than 39 and
+never why.
+
+What a working design *costs* is a separate question, answered in money by
+`pricing` against a `Scenario`. Scenarios carry no marks and cannot fail a
+submission. They are competed in.
 
 **No task lives here.** This module is the shape of a task and the machinery
 for judging one; which tasks exist is the exercise's business, declared in its
@@ -21,8 +31,6 @@ import pathlib
 from dataclasses import dataclass, field
 
 from .contest import CaseResult, Submission, Verdict
-from .metrics import measure
-from .notation_mr import BUDGET_METRICS
 
 
 # The data files an exercise's tasks read — `textFile("climate.csv")` and the
@@ -56,17 +64,12 @@ class Requirement:
     requirement inspects the run itself, so a step cannot be skipped.
     """
     name: str
-    check: str                    # which property to test
-    why: str = ""
-
-
-@dataclass
-class BudgetLimit:
-    """A non-functional limit: this metric must stay within this bound."""
-    metric: str
-    op: str
-    value: float
-    hidden: bool = False
+    #: which property to test. `all_reducers_used`, `combines_locally`,
+    #: `unique_before_shuffle` — each one a design lesson that correctness
+    #: cannot see, because the answer is identical either way. This is where a
+    #: task puts something that must be able to fail. What a working design
+    #: costs belongs in a `Scenario`, which never fails anybody.
+    check: str
     why: str = ""
 
 
@@ -132,8 +135,13 @@ class Assignment:
     starter: str = ""
     expects: list = field(default_factory=list)
     holdout_expects: list = field(default_factory=list)
-    budgets: list = field(default_factory=list)
     requires: list = field(default_factory=list)
+    #: `pricing.Scenario`s this task competes in — a workload, a failure script
+    #: and a price list each. They carry no marks and cannot fail a submission;
+    #: they exist so a working design can be argued about in money. Each one is
+    #: its own contest, because a design that wins the quiet month and loses
+    #: the crash month is the lesson rather than a defect.
+    scenarios: list = field(default_factory=list)
 
 
     def program(self, student_source: str, *, holdout: bool = False) -> str:
@@ -150,11 +158,12 @@ class Assignment:
             out.append({"kind": "expect", "text": f"{e.key} = {shown}",
                         "hidden": e.hidden} if not e.hidden else
                        {"kind": "expect", "text": "hidden test", "hidden": True})
-        for b in self.budgets:
-            out.append({"kind": "budget",
-                        "text": f"{b.metric} {b.op} {b.value:g}",
-                        "why": b.why, "hidden": b.hidden} if not b.hidden else
-                       {"kind": "budget", "text": "hidden budget", "hidden": True})
+        # Scenarios are not criteria: nothing here can fail. Their prices are
+        # published even when their parameters are held back, because you
+        # cannot design for a business whose priorities are secret.
+        for sc in self.scenarios:
+            out.append({"kind": "scenario", "text": sc.title, "why": sc.why,
+                        "hidden": False})
         return out
 
     def judge(self, student_source: str, *, holdout: bool = False) -> Submission:
@@ -173,7 +182,7 @@ class Assignment:
         sub = Submission()
 
         # An exploration task has no criteria: it is judged by whether it runs.
-        if not expects and not self.budgets and not self.requires:
+        if not expects and not self.requires:
             try:
                 build_cluster(self.dialect,
                               self.program(student_source, holdout=holdout))
@@ -216,18 +225,6 @@ class Assignment:
             sub.results.append(CaseResult(
                 req.name, Verdict.AC if ok else Verdict.WA,
                 "" if ok else detail, score=1.0 if ok else 0.0))
-
-        metrics = measure(cluster.sorted_trace())
-        for b in self.budgets:
-            key, human = BUDGET_METRICS[b.metric]
-            actual = metrics[key].value
-            ok = {"<": actual < b.value, "<=": actual <= b.value,
-                  ">": actual > b.value, ">=": actual >= b.value}[b.op]
-            sub.results.append(CaseResult(
-                f"{b.metric} {b.op} {b.value:g}" if not b.hidden else "hidden budget",
-                Verdict.AC if ok else Verdict.WA,
-                "" if ok else f"{human} was {actual:.2f}",
-                score=1.0 if ok else 0.0, hidden=b.hidden))
 
         return sub
 
@@ -336,14 +333,22 @@ def _diagnose_text(key: str, want: str, got, outputs: dict) -> str:
 def _check_requirement(req: "Requirement", cluster) -> tuple[bool, str]:
     """Test one design property against what actually happened."""
     if req.check == "all_reducers_used":
-        # A partitioner that always answers the same thing leaves reducers
-        # idle. The counts can still be right, so only the run reveals it.
-        reducers = [m for m in cluster.machines.values() if m.role == "reducer"]
+        # A partitioner that always answers the same thing leaves the machines
+        # holding the other partitions idle. The counts can still be right, so
+        # only the run reveals it. Holding a partition is a thing a machine was
+        # given, not a thing it is, so that is what is asked here.
+        holders = [m for m in cluster.machines.values()
+                   if getattr(m, "partitions", None)]
+        # A job with one partition passes here, because it is a job that
+        # works: one partition is a real design, and every key reaching it is
+        # what that design means, not a mistake in it. What it costs shows up
+        # where cost belongs — the whole fold runs on one machine, so the
+        # makespan and the imbalance say so, and the price says so after them.
         used = {e.machine for e in cluster.trace.of_kind("recv")}
-        idle = [r.name for r in reducers if r.name not in used]
+        idle = [r.name for r in holders if r.name not in used]
         if idle:
             return False, (f"{', '.join(idle)} received nothing — every key "
-                           f"went to the same reducer")
+                           f"went to the same partition")
         return True, ""
 
     if req.check == "combines_locally":
@@ -353,11 +358,41 @@ def _check_requirement(req: "Requirement", cluster) -> tuple[bool, str]:
         # by then the combining has already happened.
         words = sum(len(str(e.detail.get("value", "")).split())
                     for e in cluster.trace.of_kind("input"))
-        pairs = sum(e.detail.get("total", 0)
-                    for e in cluster.trace.of_kind("hold"))
+        # What the mappers were holding when the map phase ended, which is the
+        # only custody a combiner can have changed. A machine is weighed again
+        # after the shuffle, for the partition it was sent; counting that too
+        # would add pairs the combiner never had a chance to fold and read a
+        # working combiner as an absent one.
+        pairs = 0
+        for e in cluster.trace:
+            if e.kind == "barrier" and e.detail.get("label") == "end of map":
+                break
+            if e.kind == "hold":
+                pairs += e.detail.get("total", 0)
         if words and pairs >= words:
             return False, (f"nothing was combined before the shuffle — all "
                            f"{pairs} pair(s) still crossed the network")
+        return True, ""
+
+    if req.check == "unique_before_shuffle":
+        # Thin the data before it moves, not after. A reducer that discards
+        # duplicates produces a byte-identical answer, so no correctness test
+        # can tell the two apart. A repeat can: the same machine put the same
+        # pair on the wire twice, and the second one carried nothing the first
+        # had not already carried. That is the property, stated directly, so
+        # the message can name the machine and the pair rather than a total.
+        sent: dict[tuple, int] = {}
+        for e in cluster.trace.of_kind("send"):
+            key = (e.machine, repr(e.detail.get("payload")))
+            sent[key] = sent.get(key, 0) + 1
+        repeats = {k: n for k, n in sent.items() if n > 1}
+        if repeats:
+            (who, what), n = next(iter(repeats.items()))
+            waste = sum(n - 1 for n in repeats.values())
+            return False, (
+                f"{who} sent {what} {n} times — {waste} pair(s) crossed the "
+                f"network carrying nothing new. Remove the duplicates in the "
+                f"map, before the shuffle, not in the reduce after it")
         return True, ""
 
     return True, ""

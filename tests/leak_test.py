@@ -16,7 +16,7 @@ Real leaks this test was written after finding:
     work" and gave `return hash(key) mod n`. Both appeared as editor hovers,
     a keystroke away from the empty function they answer.
   * the `def` entry demonstrated typed signatures using `split(lower(value))`
-    then `emit(word, 1)` — the reference mapper, line for line.
+    then the pair it makes — the reference mapper, line for line.
 
 The rule that follows: an example in dsviz is written in a domain no task
 uses. Sensor readings and station names, never words in a document.
@@ -42,7 +42,11 @@ def ok(label, passed, detail=""):
 # `sum` has to be documented — but the shapes that only occur in an answer.
 ANSWERS = [
     (r"split\s*\(\s*lower\s*\(", "the mapper's normalise-then-split"),
-    (r"emit\s*\(\s*word\b", "emitting a word as the key"),
+    # The shape of the pair each mapper makes. A pattern here has to match the
+    # answer as it is written, or it passes by matching nothing — which is how
+    # a guard like this dies without failing.
+    (r"\(\s*word\s*,\s*1\s*\)", "the counting mapper's pair"),
+    (r"\(\s*word\s*,\s*key\s*\)", "the index mapper's pair"),
     (r"for\s+word\b.*\bin\s+split", "iterating a document's words"),
     (r"return\s+sum\s*\(\s*values\s*\)", "the counting reducer's body"),
     (r"hash\s*\(\s*key\s*\)\s*mod\s*n", "the partitioner's body"),
@@ -50,8 +54,8 @@ ANSWERS = [
 ]
 
 # What a student can read. `tasks/` is excluded on purpose: a task states its
-# own requirement, and Task 1 saying "emit(word, 1)" is the assignment, not a
-# leak. `src/` in a checkout is the student's own work.
+# own requirement, and Task 1 saying what a pair should carry is the
+# assignment, not a leak. `src/` in a checkout is the student's own work.
 SHIPPED = [
     (HERE / "dsviz", "*.py"),
     (HERE / "web", "*.js"),

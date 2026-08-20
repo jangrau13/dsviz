@@ -18,7 +18,7 @@ for name, spec in ASSIGNMENTS.items():
 
     # An exploration task has no criteria — its starter is meant to run. A
     # graded task's starter is a scaffold and must not already pass.
-    if not spec.expects and not spec.budgets:
+    if not spec.expects:
         assert starter["verdict"] == "AC", f"{name}: exploration starter must run"
         print(f"ok {name}: exploration task runs as given")
         continue
@@ -30,17 +30,12 @@ for name, spec in ASSIGNMENTS.items():
     assert vis["verdict"] == "AC", f"{name} visible: {vis}"
     assert hid["verdict"] == "AC", f"{name} held-out: {hid}"
     # Correctness cases must not leak their expected values on the hold-out.
-    # Budgets stay visible on purpose: they are the design target, not the
-    # answer, and a student needs to know what they are aiming at.
+    # Requirements stay visible on purpose: they describe the design a student
+    # is aiming at, not the answer they must produce. A scenario is competed
+    # in rather than judged, so it never appears as a case at all.
     visible_kinds = {r.name for r in spec.requires}          # design checks
     for c in hid["cases"]:
-        is_budget = any(c["name"].startswith(b) for b in
-                        ("network", "makespan", "imbalance", "tail",
-                         "memory", "faults"))
-        # Budgets and requirements stay visible on purpose: they describe the
-        # design a student is aiming at, not the answer they must produce.
-        assert (is_budget or c["name"] in visible_kinds
-                or c["name"] == "held-out test"), c
+        assert c["name"] in visible_kinds or c["name"] == "held-out test", c
     print(f"ok {name}: starter {starter['label']}, solution passes visible + held-out")
 
 # Fitting to the visible data must fail the hold-out.
@@ -81,7 +76,7 @@ print("ok untyped bindings are rejected")
 # missing thing is a type. The variable gets named instead.
 untyped = analyse(
     "@machine\nclass N:\n    @duration(0.1)\n    def go(x: string) -> int:\n"
-    "        return 1\n\na = N(speed=1.0)\n\nworld = World(machines=[a])\n\n"
+    '        return 1\n\na = N(type="m1.small")\n\nworld = World(machines=[a])\n\n'
     "def story() -> void:\n    got = a.go(\"hi\")\n    a.go(\"again\")\n\n"
     "job = Calls(run=story)\n\nworld.run(job)\n", "fx-calls")
 named = [d for d in json.loads(untyped)["diagnostics"]
@@ -93,8 +88,8 @@ print("ok a local with no type is named, and so is the fix")
 # Whether a particular task can be passed the wrong way is that task's test,
 # and lives beside it — see BCS-DS-Assignment-1/tests/tasks_test.py, which
 # checks that the search index cannot be passed by deduplicating after the
-# shuffle. dsviz tests that a budget is enforced; an exercise tests that its
-# own budget means what it says.
+# shuffle. dsviz tests that judging works; an exercise tests that its own
+# tasks and scenarios mean what they say.
 
 # Every metric explains itself.
 r = json.loads(analyse(SOLUTIONS["fx-takings"], "fx-takings"))
@@ -132,5 +127,22 @@ for name, spec in ASSIGNMENTS.items():
         bulky.append(f"{name}: {comment} comment lines to {code} of code")
 assert not bulky, "; ".join(bulky)
 print("ok no starter is more than three-quarters commentary")
+
+# A design lesson that correctness cannot see has to live in a requirement,
+# because a requirement can fail and money cannot. This is the case where the
+# wasteful design and the good one produce byte-identical answers: the map puts
+# every occurrence on the wire and the reduce discards the repeats afterwards.
+# Only the shape of the traffic tells them apart.
+from dsviz import map_reduce                                    # noqa: E402
+from dsviz.assignment import Requirement, _check_requirement    # noqa: E402
+
+thin = Requirement("thin before the shuffle", "unique_before_shuffle")
+wasteful = map_reduce({"d1": "the cat the", "d2": "the dog"}, partitions=2, seed=1)
+good = map_reduce({"d1": "the cat", "d2": "the dog"}, partitions=2, seed=1)
+bad_ok, why = _check_requirement(thin, wasteful)
+assert not bad_ok, "sending the same pair twice must fail"
+assert "carrying nothing new" in why, why
+assert _check_requirement(thin, good)[0], "no repeats must pass"
+print("ok a pair put on the wire twice fails, and says which machine and what")
 
 print("\nALL ASSIGNMENT TESTS PASSED")

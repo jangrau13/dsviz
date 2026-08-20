@@ -16,7 +16,7 @@
         <link rel="prev" href="../functions/">
       
       
-        <link rel="next" href="../worlds/">
+        <link rel="next" href="../machines-you-can-buy/">
       
       
         
@@ -490,10 +490,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#kindspeedn" class="md-nav__link">
+  <a href="#kindtypem1small" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Kind(speed=N)
+        Kind(type="m1.small")
       
     </span>
   </a>
@@ -581,6 +581,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../machines-you-can-buy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machines you can buy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -843,10 +871,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#kindspeedn" class="md-nav__link">
+  <a href="#kindtypem1small" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Kind(speed=N)
+        Kind(type="m1.small")
       
     </span>
   </a>
@@ -952,7 +980,7 @@
 <h3 id="kind">`@kind<a class="headerlink" href="#kind" title="Permanent link">&para;</a></h3>
 <p>class Name:`</p>
 <p>A kind of machine.</p>
-<p>The decorator says what the class is to the simulator. @machine both answers calls and makes them, @mapper and @reducer are the two halves of a job, and @process carries a clock. A class is only a kind of machine. What runs is an instance of it.</p>
+<p>The decorator says what the class is to the simulator. @machine both answers calls and makes them, and @process carries a clock. A machine is a machine: which half of a job it does is the job's to decide, the same way a master hands out tasks. A class is only a kind of machine. What runs is an instance of it.</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@machine</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">Ledger</span><span class="p">:</span>
     <span class="nd">@duration</span><span class="p">(</span><span class="mf">0.4</span><span class="p">)</span>
@@ -991,10 +1019,18 @@
 <div class="highlight"><pre><span></span><code><span class="n">vault</span> <span class="o">=</span> <span class="n">Ledger</span><span class="p">(</span><span class="n">balance</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
 <span class="n">petty</span> <span class="o">=</span> <span class="n">Ledger</span><span class="p">(</span><span class="n">balance</span><span class="o">=</span><span class="mi">40</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="kindspeedn"><code>Kind(speed=N)</code><a class="headerlink" href="#kindspeedn" title="Permanent link">&para;</a></h3>
-<p>Relative speed of one machine.</p>
-<p>1.0 is nominal and 0.25 takes four times as long. This is how you make a straggler.</p>
-<div class="highlight"><pre><span></span><code><span class="n">slow</span> <span class="o">=</span> <span class="n">Worker</span><span class="p">(</span><span class="n">speed</span><span class="o">=</span><span class="mf">0.25</span><span class="p">)</span>
+<h3 id="kindtypem1small"><code>Kind(type="m1.small")</code><a class="headerlink" href="#kindtypem1small" title="Permanent link">&para;</a></h3>
+<p>Which machine to buy.</p>
+<p>A machine is not built to order: there is a catalogue, you pick a type off it, and the machine arrives with the processor and the room that type comes with. <code>m1.small</code> is the ordinary one and what you get if you say nothing.</p>
+<p>The letter says what it is built for. <code>c</code> has the processor, for work that is slow because there is a lot of it. <code>r</code> has the room, for a machine handed more than it can hold — that one does not get better with a faster processor. <code>m</code> is the middle of both and <code>t</code> is the cheap one, which is how you make a straggler.</p>
+<p>Each type is drawn in its own colour, so a fleet of mixed machines reads as mixed at a glance.</p>
+<div class="highlight"><pre><span></span><code>  t1.small   0.3x  room 8   cheap and slow
+  m1.small     1x  room 16  the ordinary machine, and what to reach for first
+  m1.large     2x  room 32  twice the processor and twice the room
+  c1.large     4x  room 16  four times the processor, ordinary room
+  r1.large     1x  room 96  ordinary processor, six times the room
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="n">slow</span> <span class="o">=</span> <span class="n">Worker</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="s2">"t1.small"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="durationt"><code>@duration(T)</code><a class="headerlink" href="#durationt" title="Permanent link">&para;</a></h3>
 <p>How long a method takes.</p>

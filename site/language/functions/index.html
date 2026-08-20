@@ -418,10 +418,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#emitkey-value" class="md-nav__link">
+  <a href="#element-for-name-type-in-list" class="md-nav__link">
     <span class="md-ellipsis">
       
-        emit(key, value)
+        [element for name: type in list]
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        (key, value)
       
     </span>
   </a>
@@ -463,6 +474,34 @@
     
   
     Machines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../machines-you-can-buy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machines you can buy
   
 
     
@@ -689,10 +728,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#emitkey-value" class="md-nav__link">
+  <a href="#element-for-name-type-in-list" class="md-nav__link">
     <span class="md-ellipsis">
       
-        emit(key, value)
+        [element for name: type in list]
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        (key, value)
       
     </span>
   </a>
@@ -739,10 +789,17 @@
             <span class="n">top</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">reading</span>
     <span class="k">return</span> <span class="n">top</span>
 </code></pre></div>
-<h3 id="emitkey-value"><code>emit(key, value)</code><a class="headerlink" href="#emitkey-value" title="Permanent link">&para;</a></h3>
-<p>Produce one intermediate pair.</p>
-<p>Only the function passed as the job's map may emit. The key chooses a reducer by its hash, and the value is whatever the reducer takes.</p>
-<div class="highlight"><pre><span></span><code><span class="n">emit</span><span class="p">(</span><span class="n">city</span><span class="p">,</span> <span class="n">reading</span><span class="p">)</span>
+<h3 id="element-for-name-type-in-list"><code>[element for name: type in list]</code><a class="headerlink" href="#element-for-name-type-in-list" title="Permanent link">&para;</a></h3>
+<p>One element out for each element in.</p>
+<p>How a function that has to produce many things produces them. A map is handed one record and answers with every pair it made from it, which may be none, one, or thousands — so it answers with a list, and this is how that list is built.</p>
+<p>Read it right to left: take each <code>reading</code> out of <code>split(payload)</code>, and for each one put a pair into the list. The loop variable carries its type for the same reason it does in a <code>for</code> statement: nothing here is inferred.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">perStation</span><span class="p">(</span><span class="n">station</span><span class="p">:</span> <span class="n">string</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="n">string</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="n">pair</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="p">[(</span><span class="n">station</span><span class="p">,</span> <span class="n">reading</span><span class="p">)</span> <span class="k">for</span> <span class="n">reading</span><span class="p">:</span> <span class="n">string</span> <span class="ow">in</span> <span class="n">split</span><span class="p">(</span><span class="n">payload</span><span class="p">)]</span>
+</code></pre></div>
+<h3 id="key-value"><code>(key, value)</code><a class="headerlink" href="#key-value" title="Permanent link">&para;</a></h3>
+<p>The two halves of one intermediate result.</p>
+<p>What a map answers with a list of. The key decides which partition it goes to, and the value is whatever the reducer takes — a count, a document name, anything the job is about. A list of them is written <code>[pair]</code>, which is what a map declares as its return type.</p>
+<div class="highlight"><pre><span></span><code><span class="p">(</span><span class="n">station</span><span class="p">,</span> <span class="n">reading</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="with-parallel"><code>with parallel():</code><a class="headerlink" href="#with-parallel" title="Permanent link">&para;</a></h3>
 <p>Calls that all leave at the same time.</p>

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from .machine_types import colour as type_colour
 from .core import Trace
 from .values import default_visual
 
@@ -439,13 +440,15 @@ def dataflow(trace: Trace, *, title: str = "", col_gap: float = 3.2,
                 py = -row_index * row_gap
                 pos[name] = (px, py)
                 spawn = next(e for e in spawns if e.machine == name)
-                slow = (spawn.detail.get("speed") or 1.0) < 1.0
+                # A machine is painted by what it is. Two machines of one type
+                # look alike and a fleet of mixed types reads as mixed at a
+                # glance, which is the point of buying a different one.
                 box_w = min(2.6, gap * 0.85)
                 box_h = height_of(name)
                 size[name] = (box_w, box_h)
                 shapes.append(Shape("box", x=px, y=py, w=box_w, h=box_h,
                                     text=name,
-                                    color="#E8B44C" if slow else "#9AA0A6",
+                                    color=type_colour(spawn.detail.get("type")),
                                     meta={"role": role, **spawn.detail}))
             row_index += 1
 

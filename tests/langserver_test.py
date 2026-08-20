@@ -42,7 +42,7 @@ def errors(src, task=""):
 # reports errors on open teaches the student to ignore the error panel.
 for name, spec in ASSIGNMENTS.items():
     got = errors(spec.starter, name)
-    if spec.expects or spec.requires or spec.budgets:
+    if spec.expects or spec.requires:
         # A graded task ships without its wiring, so it opens with exactly one
         # complaint: that the job has not been written yet. That is the task,
         # stated. Anything else on top of it is noise on first open.

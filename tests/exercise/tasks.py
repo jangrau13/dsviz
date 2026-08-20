@@ -10,8 +10,23 @@ whole point of the split: the language must be testable without a course, or
 the course is part of the language again.
 """
 
-from dsviz.assignment import (
-    Assignment, BudgetLimit, Expectation, Requirement)
+from dsviz.assignment import Assignment, Expectation, Requirement
+from dsviz.pricing import PriceVector, Scenario
+
+
+# A price list for the fixture's imaginary depot business. Deliberately not a
+# course's: the language has to be testable without one. Calibrated only far
+# enough that no bucket vanishes — see `pricing.share`.
+DEPOT = PriceVector(
+    currency="CHF",
+    period_hours=730, machine_hour=0.21, overtime_machine_hour=0.34,
+    storage_gb_month=0.023, egress_gb=0.09, bytes_per_message=120,
+    engineer_day=1200, amortise_months=24,
+    build_days={"partitioning": 3, "replication": 6, "retry": 4},
+    rerun=180, lost_item=0.4, dropped_message=0.2, callout=250, hour_late=400,
+    per_request=0.014, requests_per_run=1800, window_seconds=6.0,
+    freshness_seconds=6.0, stale_refund=0.014, stale_penalty=0.06,
+)
 
 
 TITLE = "Fixture — one task per dialect"
@@ -38,25 +53,19 @@ TAKINGS = Assignment(
 # Each split is a day's visits: branch names, one after another, and
 # the case is not consistent. Count how many visits each branch had.
 
-@mapper
+@machine
 class Till:
     pass
 
-@reducer
-class Ledger:
-    pass
+m1 = Till(type="m1.small")
+m2 = Till(type="m1.small")
 
-m1 = Till(speed=1.0)
-m2 = Till(speed=1.0)
-r1 = Ledger(speed=1.0)
-r2 = Ledger(speed=1.0)
-
-world = World(machines=[m1, m2, r1, r2])
+world = World(machines=[m1, m2])
 
 # --- your code -------------------------------------------------------
 # Write the three functions here, then run the job in the world:
 #
-#     job = MapReduce(map=..., reduce=..., partition=...)
+#     job = MapReduce(map=..., reduce=..., partition=..., partitions=2)
 #     world.run(job)
 """,
     goals=["fixture"],
@@ -65,21 +74,22 @@ world = World(machines=[m1, m2, r1, r2])
         "Write the three functions.",
         "Pass them to a job, and run it in the world.",
     ],
-    # `depot` and `store` hash to different reducers, so the requirement
+    # `depot` and `store` hash to different partitions, so the requirement
     # that both get work can be met — and a partitioner that always answers
     # the same thing can be caught.
-    setup='mappers 2\nreducers 2\n'
-          'split day1: "depot Store depot"\n'
+    setup='split day1: "depot Store depot"\n'
           'split day2: "store DEPOT"',
-    holdout='mappers 2\nreducers 2\n'
-            'split day1: "quay Dock quay"\n'
+    holdout='split day1: "quay Dock quay"\n'
             'split day2: "dock DOCK"',
     expects=[Expectation("depot", 3), Expectation("store", 2)],
     holdout_expects=[Expectation("quay", 2), Expectation("dock", 3)],
     requires=[Requirement("every reducer gets work", "all_reducers_used",
                           why="that is what partition is for")],
-    budgets=[BudgetLimit("network", "<", 20,
-                         why="every pair emitted crosses the network")],
+    scenarios=[
+        Scenario("fx-quiet", "A quiet week", "the depot counts its takings",
+                 DEPOT, runs_per_period=2880,
+                 why="nothing fails; whatever is left is efficiency"),
+    ],
 )
 
 # A second MapReduce, so "the same code stamped against a different task" has
@@ -93,24 +103,17 @@ BUSIEST = Assignment(
 # The same shape as fx-takings, written out. Nothing is checked here: it
 # ships complete, which is what an exploration task is.
 
-@mapper
+@machine
 class Till:
     pass
 
-@reducer
-class Ledger:
-    pass
+m1 = Till(type="m1.small")
+m2 = Till(type="m1.small")
 
-m1 = Till(speed=1.0)
-m2 = Till(speed=1.0)
-r1 = Ledger(speed=1.0)
-r2 = Ledger(speed=1.0)
+world = World(machines=[m1, m2])
 
-world = World(machines=[m1, m2, r1, r2])
-
-def perDay(key: string, value: string) -> void:
-    for branch: string in split(lower(value)):
-        emit(branch, 1)
+def perDay(key: string, value: string) -> [pair]:
+    return [(branch, 1) for branch: string in split(lower(value))]
 
 def addUp(key: string, values: [int]) -> int:
     return sum(values)
@@ -118,15 +121,14 @@ def addUp(key: string, values: [int]) -> int:
 def spread(key: string, n: int) -> int:
     return hash(key) mod n
 
-job = MapReduce(map=perDay, reduce=addUp, partition=spread)
+job = MapReduce(map=perDay, reduce=addUp, partition=spread, partitions=2)
 
 world.run(job)
 """,
     goals=["fixture"],
     brief="The same shape as fx-takings, with nothing checked.",
     steps=["Run it."],
-    setup='mappers 2\nreducers 2\n'
-          'split day1: "depot store depot"\n'
+    setup='split day1: "depot store depot"\n'
           'split day2: "store depot"',
 )
 
@@ -146,8 +148,8 @@ class Warehouse:
 class Shop:
     pass
 
-shop = Shop(speed=1.0)
-depot = Warehouse(speed=1.0)     # step 2: make this 0.25
+shop = Shop(type="m1.small")
+depot = Warehouse(type="m1.small")     # step 2: make this 0.25
 
 world = World(machines=[shop, depot])
 
@@ -175,8 +177,8 @@ TICKS = Assignment(
 class Node:
     pass
 
-p1 = Node(speed=1.0)
-p2 = Node(speed=1.0)
+p1 = Node(type="m1.small")
+p2 = Node(type="m1.small")
 
 world = World(machines=[p1, p2])
 
@@ -205,8 +207,8 @@ STAGES = Assignment(
 class Executor:
     pass
 
-e1 = Executor(speed=1.0)
-e2 = Executor(speed=1.0)
+e1 = Executor(type="m1.small")
+e2 = Executor(type="m1.small")
 
 world = World(machines=[e1, e2])
 

@@ -232,6 +232,7 @@ class Machine:
         self.items.extend(items)
         self.cluster._emit(self.clock, "hold", self.name,
                            items=list(items), total=len(self.items),
+                           capacity=self.capacity,
                            over_capacity=self.is_overloaded)
         return self
 

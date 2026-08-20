@@ -9,7 +9,7 @@ naive     = map_reduce(docs, partitions=2)                      # baseline
 combiner  = map_reduce(docs, partitions=2,
     mapper=lambda n,t: [(w,c) for w,c in __import__("collections").Counter(t.split()).items()])
 skewed    = map_reduce(docs, partitions=1)                      # one reducer: no parallelism
-straggler = map_reduce(docs, partitions=2, speeds={"mapper-3":0.2})
+straggler = map_reduce(docs, partitions=2, speeds={"machine-3":0.2})
 
 subs = {"naive":naive.sorted_trace(), "combiner":combiner.sorted_trace(),
         "one-reducer":skewed.sorted_trace(), "straggler":straggler.sorted_trace()}

@@ -28,24 +28,22 @@ print("\nALL TYPE TESTS PASSED")
 # MapReduce is not word count. What a job carries is declared by the student's
 # own annotations and enforced across map, combine and reduce.
 from dsviz.expr import (parse_functions, check_functions, bind_helpers, infer,
-                        BUILTINS, FuncType)
+                        BUILTINS, FuncType, VType)
 
 def errors_in(src):
     funcs, d = parse_functions(src)
     d += check_functions(funcs)
     return funcs, [x for x in d if x.severity == "error"]
 
-COUNT = '''def map(key: string, value: string) -> void:
-    for w: string in split(value):
-        emit(w, 1)
+COUNT = '''def map(key: string, value: string) -> [pair]:
+    return [(w, 1) for w: string in split(value)]
 
 def reduce(key: string, values: [int]) -> int:
     return sum(values)
 '''
 
-CRAWL = '''def map(key: string, value: string) -> void:
-    for link: string in split(value):
-        emit(link, key)
+CRAWL = '''def map(key: string, value: string) -> [pair]:
+    return [(link, key) for link: string in split(value)]
 
 def reduce(key: string, values: [string]) -> string:
     return upper(key)
@@ -62,25 +60,23 @@ assert funcs["map"].value_type == "string", funcs["map"].value_type
 print("a crawler binds the value type to string")
 
 # Disagreement between map and reduce is the error worth catching.
-MIXED = '''def map(key: string, value: string) -> void:
-    for w: string in split(value):
-        emit(w, 1)
+MIXED = '''def map(key: string, value: string) -> [pair]:
+    return [(w, 1) for w: string in split(value)]
 
 def reduce(key: string, values: [string]) -> string:
     return key
 '''
 _, errs = errors_in(MIXED)
-assert errs, "emitting int while reducing [string] must be an error"
-assert any("emit" in str(e) for e in errs), [str(e) for e in errs]
+assert errs, "making int pairs while reducing [string] must be an error"
+assert any("carries int" in str(e) for e in errs), [str(e) for e in errs]
 print("map/reduce disagreement is caught:", str(errs[0]).splitlines()[0])
 
 # --- functions are values ------------------------------------------------
 HELPER = '''def clean(text: string) -> [string]:
     return split(lower(text))
 
-def map(key: string, value: string) -> void:
-    for w: string in clean(value):
-        emit(w, 1)
+def map(key: string, value: string) -> [pair]:
+    return [(w, 1) for w: string in clean(value)]
 
 def reduce(key: string, values: [int]) -> int:
     return sum(values)
@@ -105,3 +101,26 @@ offenders = [n for n in BUILTINS
              if any(w in n.lower() for w in PROBLEM_SHAPED)]
 assert not offenders, f"builtins must stay general, found: {offenders}"
 print("no problem-specific builtins:", ", ".join(sorted(BUILTINS)))
+
+
+# --- comprehensions are checked like everything else ---------------------
+# The element decides the list's type, so a job can say `-> [pair]` and be held
+# to it, and the written loop type has to agree with what the list holds.
+assert infer("[(c, 1) for c: string in stops]", {"stops": VType.LIST_STR}, 1, []) \
+    == VType.LIST_PAIR
+assert infer("[n for n: int in counts]", {"counts": VType.LIST_INT}, 1, []) \
+    == VType.LIST_INT
+
+diags = []
+infer("[(c, 1) for c: int in stops]", {"stops": VType.LIST_STR}, 1, diags)
+assert any("holds string" in d.message for d in diags), [str(d) for d in diags]
+
+diags = []
+infer("[(c, 1) for c: string in name]", {"name": VType.STR}, 1, diags)
+assert any("runs over a list" in d.message for d in diags), [str(d) for d in diags]
+
+# A name bound by the loop is in scope for the element and nowhere else.
+diags = []
+infer("c", {}, 1, diags)
+assert any("unknown name" in d.message for d in diags)
+print("comprehensions are typed, and their loop variable is scoped")

@@ -35,11 +35,18 @@ you called it never enters into it.
 | `string` | text |
 | `[int]` | a list of numbers |
 | `[string]` | a list of text |
-| `pair` | a (key, value) pair |
+| `pair` | a (key, value) pair, written `(key, value)` |
+| `[pair]` | a list of pairs — what a map answers with |
 | `void` | nothing |
 
 `[int]` and `[string]` are deliberately distinct: the mistakes worth
 catching are the ones that confuse a list of counts with a list of words.
+
+A function that produces one thing returns it. A function that
+produces an unknown number of them returns a list, and says so: a map
+is handed one record and answers `[pair]`, because how many pairs it
+makes is not known until it has made them. A reduce collapses many
+values into exactly one, so it answers with that one value.
 
 ## Several files
 

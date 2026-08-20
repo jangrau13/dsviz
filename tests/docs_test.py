@@ -44,12 +44,12 @@ WORLD = ("@machine\n"
          "    @duration(0.4)\n"
          "    def balance(account: string) -> int:\n"
          "        return 120\n\n"
-         "bank = Ledger(speed=1.0)\n"
+         'bank = Ledger(type="m1.small")\n'
          # A second machine, because the reference documents a construct whose
          # whole point is two of them being asked at once. One machine could
          # not demonstrate it, and an example that cannot be checked is the
          # thing this file exists to prevent.
-         "mirror = Ledger(speed=1.0)\n"
+         'mirror = Ledger(type="m1.small")\n'
          "world = World(machines=[bank, mirror])\n\n")
 DRIVER = ('\ndef story() -> void:\n'
           '    owed: int = bank.balance("savings")\n\n'

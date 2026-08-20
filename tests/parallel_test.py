@@ -88,9 +88,9 @@ class Node:
     def ping(word: string) -> string:
         return word
 
-alice = Node(speed=1.0)
-bob = Node(speed=1.0)
-carol = Node(speed=1.0)
+alice = Node(type="m1.small")
+bob = Node(type="m1.small")
+carol = Node(type="m1.small")
 world = World(machines=[alice, bob, carol])
 """
 TAIL = "\njob = Calls(run=story)\nworld.run(job)\n"

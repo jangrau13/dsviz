@@ -3,7 +3,7 @@
  *
  * Highlighting lives here because Monarch is a JavaScript table and there is
  * nowhere else to put it. Everything a student *reads* — what a name means,
- * what it looks like written out, what completes after `budget ` — comes from
+ * what it looks like written out, what completes after a keyword — comes from
  * `dsviz.langserver`, the same table the documentation site is generated from.
  *
  * It used to be copied into this file, and the copy drifted badly. The editor
@@ -35,19 +35,20 @@ let monacoRef_ = null;
  * language service, because those are the lists that grew and drifted. */
 const BLOCKS = [
   "def", "class", "return", "pass", "for", "in", "if", "with", "parallel",
-  "emit", "and", "or", "not", "mod",
+  "and", "or", "not", "mod",
 ];
 const TYPES = ["int", "string", "pair", "void"];
 const STATEMENTS = [
-  "assert", "expect", "budget", "note", "lose", "use", "input", "process",
-  "event", "on", "off", "clock", "speed", "combiner",
-  "mappers", "reducers", "executors", "partitions", "capacity",
+  "assert", "expect", "note", "lose", "use", "input", "process",
+  "event", "on", "off", "clock", "combiner",
+  "executors", "partitions", "capacity",
 ];
 
 /* Entries in the documentation that are not words anyone types: `instance`
  * documents `name = Kind(...)` and `class` documents the decorator above one.
  * Colouring the prose name would be colouring a coincidence. */
-const NOT_TYPED = new Set(["instance", "class", "def", "parallel", "emit"]);
+const NOT_TYPED = new Set(["instance", "class", "def", "parallel",
+                           "comprehension"]);
 
 /** Hand the editor the engine's documentation. Called once Pyodide is up. */
 function useLanguageService(fns) {
@@ -174,8 +175,8 @@ function registerLanguage(monaco) {
 
   // --- completions ---
   // Everything offered is something the engine documents, filtered to the
-  // exercise this file is in: a Spark task is not offered `emit`, and an RPC
-  // task is not offered `reduceByKey`.
+  // exercise this file is in: a Spark task is not offered a comprehension,
+  // and an RPC task is not offered `reduceByKey`.
   monaco.languages.registerCompletionItemProvider(LANG_ID, {
     triggerCharacters: [" ", "\n", "."],
     provideCompletionItems(model, position) {
@@ -189,14 +190,6 @@ function registerLanguage(monaco) {
       const K = monaco.languages.CompletionItemKind;
       const R = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
 
-      // After `budget `, the answer is a metric, not a keyword.
-      if (/\bbudget\s+\w*$/.test(line.slice(0, position.column - 1))) {
-        return { suggestions: Object.entries(language.budgets())
-          .map(([name, doc]) => ({
-            label: name, kind: K.EnumMember, insertText: name, range,
-            documentation: { value: doc },
-          })) };
-      }
 
       return { suggestions: language.completions().map((d) => {
         // A name written as a call is completed as one, with the cursor
@@ -224,11 +217,6 @@ function registerLanguage(monaco) {
       if (!word) return null;
       const doc = language.hover(word.word);
       if (doc && doc.name) return { contents: [{ value: markdown(doc) }] };
-      const budgets = language.budgets();
-      if (budgets[word.word]) {
-        return { contents: [{ value: `**budget ${word.word}**` },
-                            { value: budgets[word.word] }] };
-      }
       return null;
     },
   });

@@ -16,6 +16,7 @@ The reference for the dsviz language. A program declares kinds of machine, makes
 - [Datasets](https://jangrau13.github.io/dsviz/language/datasets/index.md)
 - [Functions](https://jangrau13.github.io/dsviz/language/functions/index.md)
 - [Jobs](https://jangrau13.github.io/dsviz/language/jobs/index.md)
+- [Machines you can buy](https://jangrau13.github.io/dsviz/language/machines-you-can-buy/index.md)
 - [Machines](https://jangrau13.github.io/dsviz/language/machines/index.md)
 - [Messages](https://jangrau13.github.io/dsviz/language/messages/index.md)
 - [Worlds](https://jangrau13.github.io/dsviz/language/worlds/index.md)

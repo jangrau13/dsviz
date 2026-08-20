@@ -82,8 +82,7 @@ def map_reduce(inputs, *, partitions: int = 2,
                capacity: int | None = None,
                crash: tuple[str, float] | None = None,
                mappers_count: int | None = None,
-               mapper_names: list | None = None,
-               reducer_names: list | None = None,
+               machine_names: list | None = None,
                reduce: Callable[[object, list], object] | None = None,
                partition: Callable[[object, int], int] | None = None,
                traits: dict | None = None,
@@ -95,7 +94,11 @@ def map_reduce(inputs, *, partitions: int = 2,
         mapper   (name, contents) -> pairs; defaults to word count
         speeds   {machine: speed} — set one below 1.0 to make a straggler
         crash    (machine, time) — kill a machine mid-job
-        mappers_count  how many mappers to use; defaults to one per split,
+        machine_names  the machines to run on; a machine maps, and after the
+                 barrier some of them reduce. Nothing here is a mapper or a
+                 reducer: which work a machine does is the job's to say, the
+                 same way a master hands out tasks.
+        mappers_count  how many machines to use; defaults to one per split,
                  and splits are shared round-robin when there are fewer
         reduce   (key, values) -> value; defaults to sum
         partition (key, n) -> int; defaults to the 31-hash
@@ -119,7 +122,7 @@ def map_reduce(inputs, *, partitions: int = 2,
     c = Cluster("mapreduce", seed=seed)
 
     def settings(name: str) -> dict:
-        """How this machine was declared: its speed and how it fails."""
+        """How this machine was declared: what it is, and how it fails."""
         t = dict(traits.get(name, {}))
         t.setdefault("speed", speeds.get(name, 1.0))
         return t
@@ -127,28 +130,33 @@ def map_reduce(inputs, *, partitions: int = 2,
     # One mapper per split, any number of them, unless `mappers` caps it.
     # When the caller names its machines, those names are used as written — a
     # student who declares a slow mapper wants to see *that* name on the
-    # timeline, not `mapper-2`.
-    map_names = list(mapper_names or [])
+    # timeline, not `machine-2`.
+    map_names = list(machine_names or [])
     n_map = len(map_names) or mappers_count or len(inputs)
     if not map_names:
-        map_names = [f"mapper-{i + 1}" for i in range(n_map)]
-    red_names = list(reducer_names or []) or [f"reducer-{p}" for p in range(partitions)]
+        map_names = [f"machine-{i + 1}" for i in range(n_map)]
 
     names = list(inputs)
     assignment: dict[str, list[str]] = {m: [] for m in map_names}
-    for i, name in enumerate(names):          # round-robin when splits > mappers
+    for i, name in enumerate(names):          # round-robin when splits > machines
         assignment[map_names[i % n_map]].append(name)
 
     mappers = [
-        c.machine(mname, role="mapper", splits=assignment[mname],
+        c.machine(mname, role="machine", splits=assignment[mname],
                   **settings(mname))
         for mname in assignment
     ]
-    reducers = [
-        c.machine(red_names[p], role="reducer", partition=p,
-                  capacity=capacity, **settings(red_names[p]))
-        for p in range(partitions)
-    ]
+
+    # Who holds which partition. Assigned by declaration order, and by
+    # position rather than by anything the machine is, because a machine is
+    # not a reducer — it is a machine that has been given a partition to fold.
+    # Order matters: it has to be the same on every run or a seeded trace
+    # stops replaying, and a student comparing two runs would be comparing
+    # two different clusters.
+    owner = {p: mappers[p % len(mappers)] for p in range(partitions)}
+    for p, m in owner.items():
+        m.partitions = getattr(m, "partitions", []) + [p]
+    reducers = list(dict.fromkeys(owner.values()))
 
     # map phase — each mapper emits pairs from its own split
     #
@@ -195,18 +203,62 @@ def map_reduce(inputs, *, partitions: int = 2,
 
     c.barrier("end of map")
 
-    # shuffle — every pair crosses to the reducer owning its key
+    # What a machine made is not what it was sent. Both live in `items`, so
+    # the boundary between them is written down here, while it is still known:
+    # after the shuffle the pairs a machine produced are gone — consumed by
+    # the shuffle, exactly as they are in a real job — and what remains is the
+    # partition it has to fold. A machine that does both halves depends on
+    # this, or it folds its own map output a second time along with pairs
+    # belonging to partitions it does not own.
+    made = {m.name: len(m.items) for m in mappers}
+    # Capacity is about holding a partition, so it applies from here. Map
+    # output is measured by `peak_items` and does not count against it.
+    for m in reducers:
+        # A machine's room came with the machine. A job may still state one,
+        # for a scenario that is about running out of it whatever was bought.
+        if capacity is not None:
+            m.capacity = capacity
+
+    # shuffle — every pair crosses to the machine holding its partition
     for m in mappers:
         if not m.alive:
             continue
         for key, val in emitted[m.name]:
-            target = c.machines[red_names[partition(key, partitions) % partitions]]
+            # A machine that holds the partition its own pair belongs to
+            # still sends it, and it still counts. A shuffle is a fetch
+            # whoever ends up doing it, and a message that went uncounted
+            # because one machine happened to do both halves would quietly
+            # undo every network budget in the course.
+            target = owner[partition(key, partitions) % partitions]
             m.send(target, (key, val))
 
     c.barrier("end of shuffle")
+    for m in mappers:
+        del m.items[:made[m.name]]      # map output, now shuffled away
+
+    # What each machine is left holding is its partition, and that is what
+    # `capacity` is about. Weighing it here rather than as it arrives is what
+    # makes a machine given more than it can hold say so: an empty `hold` adds
+    # nothing and emits what custody now stands at, so a partition too big for
+    # the machine that owns it is on the trace as `over_capacity` instead of
+    # being a limit nothing ever tests.
+    for r in reducers:
+        if r.alive:
+            r.hold()
 
     # reduce phase — group by key, then collapse
     for r in reducers:
+        if not r.alive:
+            # It died during the map phase and never came back, and it was
+            # also holding a partition. Both halves are lost, and they are
+            # lost differently: its map output is recomputed because the input
+            # it came from is still on disk, while the partition it was sent
+            # is not, because the pairs were shipped to it once and nobody
+            # kept a copy. That asymmetry is the same one below, met earlier.
+            c.note(f"{r.name} never came back, and it was holding "
+                   f"{'partition ' + ', '.join(str(p) for p in r.partitions)}"
+                   f" — those keys have no answer", at=r.clock)
+            continue
         grouped = defaultdict(list)
         for key, val in r.items:
             grouped[key].append(val)

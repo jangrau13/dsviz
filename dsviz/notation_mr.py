@@ -5,18 +5,15 @@ The student-facing syntax for the MapReduce exercise. Shares the diagnostic
 and type machinery with the vector-clock notation, so the editor treats both
 the same way.
 
-    mappers 3
-    reducers 2
+    partitions 2
 
     split doc1: "the cat sat"
     split doc2: "the dog ran"
 
     combiner on              # aggregate locally before the shuffle
-    mapper-2 speed 0.35      # a straggler
     capacity 8
 
     expect the = 3
-    budget network < 40
 """
 
 from __future__ import annotations
@@ -27,13 +24,13 @@ from collections import Counter
 from .contest import CaseResult, Submission, Verdict
 from .expr import (Budget, bind_helpers, check_functions, parse_functions,
                    run_function)
-from .metrics import measure
+from .machine_types import DEFAULT_TYPE, get as machine_type
 from .notation import Diagnostic, NotationError, _strip
 from .patterns import map_reduce
 
 
 def job_settings(source: str) -> dict:
-    """How the student asked the job to be run: mappers, reducers, capacity."""
+    """How the student asked the job to be run: machines, partitions, capacity."""
     from .syntax import from_tree
 
     mod, _ = from_tree(source)
@@ -44,10 +41,13 @@ def job_workers(source: str) -> tuple[list, list, dict]:
     """
     The machines the student declared, with the settings each was given.
 
-    `mappers=[fast, slow]` names machines the program made, and each carries
-    its own settings:
+    A machine is a machine. Which half of a job it does is not written on its
+    class and never was true of one — a worker in a real cluster is handed a
+    map task or a reduce task by the master, and the same worker can be handed
+    both. So there is nothing to sort here: these are the machines the world
+    has, and the job decides what they do.
 
-        @mapper
+        @machine
         class Worker:
             pass
 
@@ -55,14 +55,14 @@ def job_workers(source: str) -> tuple[list, list, dict]:
         slow = Worker(speed=0.3)
 
     Returning those names means the timeline shows `slow` rather than
-    `mapper-2`, which is the point of naming it — a straggler is recognisable
+    `machine-2`, which is the point of naming it — a straggler is recognisable
     on the picture only if the picture uses the name the student gave it.
     """
     from .syntax import from_tree
 
     mod, _ = from_tree(source)
     if not mod.jobs:
-        return [], [], {}
+        return [], {}
 
     settings = mod.jobs[0].settings
     traits: dict = {}
@@ -78,15 +78,18 @@ def job_workers(source: str) -> tuple[list, list, dict]:
         """
         inst = mod.instances.get(var)
         if inst is None:
-            return {"speed": 1.0}
+            return dict(machine_type(DEFAULT_TYPE).settings())
         cls = mod.classes.get(inst.cls)
         declared = cls.decorators[0].args if cls is not None and cls.decorators else {}
         out: dict = {}
-        for key, default, cast in (("speed", 1.0, float),
-                                   ("error_rate", 0.0, float),
+        for key, default, cast in (("error_rate", 0.0, float),
                                    ("restart_after", 1.0, float),
                                    ("on_crash", "stay_dead", str)):
             out[key] = cast(inst.settings.get(key, declared.get(key, default)))
+        # What the machine is, as opposed to how it behaves when it breaks:
+        # the type it was bought as decides its processor and its room.
+        chosen = str(inst.settings.get("type", declared.get("type", DEFAULT_TYPE)))
+        out.update(machine_type(chosen).settings())
         return out
 
     def kind_of(var: str) -> str:
@@ -109,16 +112,14 @@ def job_workers(source: str) -> tuple[list, list, dict]:
         # Machines named on the job itself, for a program that wires them there
         # rather than describing a world. Without either there is nothing to
         # run on, and `check_world` has already said so.
-        for role in ("mappers", "reducers"):
-            value = settings.get(role)
-            if isinstance(value, list):
-                chosen += [str(v) for v in value]
+        value = settings.get("machines")
+        if isinstance(value, list):
+            chosen += [str(v) for v in value]
 
-    mappers = [m for m in chosen if kind_of(m) == "mapper"]
-    reducers = [m for m in chosen if kind_of(m) == "reducer"]
-    for m in mappers + reducers:
+    machines = [m for m in chosen if kind_of(m) in ("machine", "process")]
+    for m in machines:
         traits[m] = traits_of(m)
-    return mappers, reducers, traits
+    return machines, traits
 
 
 def job_roles(source: str) -> dict:
@@ -164,15 +165,12 @@ def last_line(source: str) -> int:
     return 1
 
 RULES_MR = [
-    ("mappers",   re.compile(r"^mappers\s+(?P<n>\d+)$", re.I)),
-    ("reducers",  re.compile(r"^reducers\s+(?P<n>\d+)$", re.I)),
+    ("partitions", re.compile(r"^partitions\s+(?P<n>\d+)$", re.I)),
     ("split",     re.compile(r'^split\s+(?P<name>[\w.-]+)\s*:\s*"(?P<text>[^"]*)"$', re.I)),
     ("combiner",  re.compile(r"^combiner\s+(?P<state>on|off)$", re.I)),
-    ("speed",     re.compile(r"^(?P<who>[\w-]+)\s+speed\s+(?P<v>[\d.]+)$", re.I)),
     ("capacity",  re.compile(r"^capacity\s+(?P<n>\d+)$", re.I)),
     ("crash",     re.compile(r"^(?P<who>[\w-]+)\s+crashes(?:\s+at\s+(?P<at>[\d.]+))?$", re.I)),
     ("expect",    re.compile(r"^expect\s+(?P<key>\S+)\s*=\s*(?P<count>\d+)$", re.I)),
-    ("budget",    re.compile(r"^budget\s+(?P<metric>\w+)\s*(?P<op><|<=|>|>=)\s*(?P<value>[\d.]+)$", re.I)),
     ("note",      re.compile(r"^note\s+(?P<text>.+)$", re.I)),
     # `use` is resolved before checking; see project.py.
     ("use",       re.compile(r"^use\s+[\w./-]+$", re.I)),
@@ -182,17 +180,6 @@ RULES_MR = [
     # unparseable.
     ("job",       re.compile(r"^\w+\s*=\s*\w+\s*\(.*\)$")),
 ]
-
-# Which metric each budget name refers to, and how it reads in a message.
-BUDGET_METRICS = {
-    "network":     ("network_msgs", "messages across the network"),
-    "makespan":    ("makespan", "seconds to finish"),
-    "imbalance":   ("load_imbalance", "load imbalance ratio"),
-    "tail":        ("tail_ratio", "tail latency ratio"),
-    "memory":      ("peak_items", "items held by one machine"),
-    "faults":      ("fault_cost", "cost of failures"),
-}
-
 
 FUNC_HEAD = re.compile(r"^def\s+\w+\s*\(")
 
@@ -226,7 +213,7 @@ def parse_mr(source: str) -> tuple[list[tuple], list[Diagnostic]]:
             diags.append(Diagnostic(
                 i, 1, "error", f"cannot parse: {line!r}",
                 hint='expected e.g. \'split doc1: "the cat sat"\', '
-                     "'reducers 2', 'combiner on', 'budget network < 40'"))
+                     "'partitions 2', 'combiner on', 'expect the = 3'"))
     return stmts, diags
 
 
@@ -241,7 +228,7 @@ def lint_mr(source: str) -> list[Diagnostic]:
     # one checker rather than re-stated here.
     diags += lint_program(source)[1]
     splits = [g for k, g, _ in stmts if k == "split"]
-    reducers = [g for k, g, _ in stmts if k == "reducers"]
+    partitions = [g for k, g, _ in stmts if k == "partitions"]
 
     if not splits:
         diags.append(Diagnostic(
@@ -257,27 +244,23 @@ def lint_mr(source: str) -> list[Diagnostic]:
                     f"on line {seen[g['name']]}",
                     hint="split names must be unique"))
             seen[g["name"]] = line
-        elif kind == "reducers" and int(g["n"]) < 1:
+        elif kind == "partitions" and int(g["n"]) < 1:
             diags.append(Diagnostic(
-                line, 1, "error", "need at least one reducer"))
+                line, 1, "error", "need at least one partition"))
         elif kind == "speed" and float(g["v"]) <= 0:
             diags.append(Diagnostic(
                 line, 1, "error", "speed must be greater than zero",
                 hint="0.5 runs at half rate; 1.0 is nominal"))
-        elif kind == "budget" and g["metric"].lower() not in BUDGET_METRICS:
-            diags.append(Diagnostic(
-                line, 1, "error", f"unknown budget {g['metric']!r}",
-                hint=f"available: {', '.join(sorted(BUDGET_METRICS))}"))
 
-    if not reducers:
+    if not partitions and "partitions" not in job_settings(source):
         diags.append(Diagnostic(
-            1, 1, "warning", "no reducer count given — defaulting to 2",
-            hint="add 'reducers N' to be explicit"))
+            1, 1, "warning", "no partition count given — defaulting to 2",
+            hint="say so on the job: MapReduce(..., partitions=2)"))
     return diags
 
 
 def build_mr(source: str, *, seed: int | None = None):
-    """Run a MapReduce program. Returns (cluster, expectations, budgets).
+    """Run a MapReduce program. Returns (cluster, expectations).
 
     `seed` fixes the failure draws, so one run out of a hundred can be pulled
     back and looked at.
@@ -294,14 +277,11 @@ def build_mr(source: str, *, seed: int | None = None):
     combiner = False
     crash = None
     expects: list[tuple[str, int, int]] = []     # key, count, line
-    budgets: list[tuple[str, str, float, int]] = []
 
     for kind, g, line in stmts:
         if kind == "split":
             splits[g["name"]] = g["text"]
-        elif kind == "mappers":
-            n_map = int(g["n"])
-        elif kind == "reducers":
+        elif kind == "partitions":
             n_red = int(g["n"])
         elif kind == "speed":
             speeds[g["who"]] = float(g["v"])
@@ -313,32 +293,22 @@ def build_mr(source: str, *, seed: int | None = None):
             crash = (g["who"], float(g["at"]) if g.get("at") else 0.0)
         elif kind == "expect":
             expects.append((g["key"], int(g["count"]), line))
-        elif kind == "budget":
-            budgets.append((g["metric"].lower(), g["op"], float(g["value"]), line))
 
     funcs, _ = parse_functions(source)
     bind_helpers(funcs)          # the student's own functions become callable
     budget = Budget()
 
-    # How the student asked for it to be run: `mappers=3, reducers=2` on the
-    # job line. Saying "three mappers and two reducers" belongs next to the
-    # functions being run, not in a separate configuration dialect.
+    # How the student asked for it to be run: `partitions=2` on the job line.
+    # Saying how many ways the keys are split belongs next to the functions
+    # being run, not in a separate configuration dialect.
     settings = job_settings(source)
-    # `mappers=3` asks for a count; `mappers=[Fast, Straggler]` names the
-    # machines and brings their own speeds with them.
-    map_names, red_names, traits = job_workers(source)
+    machines, traits = job_workers(source)
     # `m1 speed 0.5` in the old configuration lines still works; a machine
     # declared in the world wins, because that is where it is described.
     for name, speed in speeds.items():
         traits.setdefault(name, {})["speed"] = traits.get(name, {}).get("speed", speed)
-    if not isinstance(settings.get("mappers"), list):
-        n_map = int(settings.get("mappers", n_map or 0)) or n_map
-    if not isinstance(settings.get("reducers"), list):
-        n_red = int(settings.get("reducers", n_red or 0)) or n_red
-    if map_names:
-        n_map = len(map_names)
-    if red_names:
-        n_red = len(red_names)
+    if machines:
+        n_map = len(machines)
     if "capacity" in settings:
         capacity = int(settings["capacity"])
     if "combiner" in settings:
@@ -369,6 +339,20 @@ def build_mr(source: str, *, seed: int | None = None):
             hint="wire them up with e.g. "
                  "job = MapReduce(map=…, reduce=…, partition=…) and then "
                  "world.run(job)")])
+    # How many ways the keys are split. This is the `n` the partitioner is
+    # handed, so it is the student's to choose and not the framework's to
+    # assume — a job that does not say gets told to say. Checked after the
+    # roles, because a program with no job at all has a better error waiting
+    # for it above than one about partitions.
+    if "partitions" in settings:
+        n_red = int(settings["partitions"])
+    elif n_red is None:
+        raise NotationError([Diagnostic(
+            job_line(source) or last_line(source), 1, "error",
+            "this job does not say how many partitions it has",
+            hint="write partitions=2 on the MapReduce line — it is the `n` "
+                 "your partitioner is handed")])
+
     missing = [r for r in required if not roles.get(r)]
     if missing:
         raise NotationError([Diagnostic(
@@ -382,17 +366,18 @@ def build_mr(source: str, *, seed: int | None = None):
         name = roles.get(role)
         return funcs.get(name) if name else None
 
-    def call(fn, values, *, collect_emits=False):
+    def call(fn, values):
         """Apply a student function, binding arguments to the names *they* wrote."""
-        return run_function(fn, dict(zip(fn.params, values)), budget,
-                            collect_emits=collect_emits)
+        return run_function(fn, dict(zip(fn.params, values)), budget)
 
     # The mapper the student passed replaces the default word count.
     mapper_fn = None
     fn = bound("map")
     if fn is not None:
         def mapper_fn(name, text, _fn=fn):
-            return call(_fn, [name, text], collect_emits=True)
+            # The pairs a mapper makes are what it answers with, so there is
+            # nothing to collect: the list it returns is the list of pairs.
+            return call(_fn, [name, text]) or []
     elif combiner:
         mapper_fn = lambda name, text: list(Counter(text.split()).items())
 
@@ -431,23 +416,23 @@ def build_mr(source: str, *, seed: int | None = None):
 
     cluster = map_reduce(
         splits, partitions=n_red or 2, mappers_count=n_map,
-        mapper_names=map_names or None, reducer_names=red_names or None,
+        machine_names=machines or None,
         traits=traits, capacity=capacity, mapper=mapper_fn,
         reduce=reducer_fn, partition=partition_fn, crash=crash, seed=seed)
-    return cluster, expects, budgets
+    return cluster, expects
 
 
 def judge_mr(source: str) -> Submission:
     """
     Judge a MapReduce program.
 
-    Correctness (`expect`) and non-functional budgets are checked separately,
-    because a submission can be right and still be a bad design — which is the
-    point of the exercise.
+    Correctness only. Whether a working submission is a *good* design is a
+    question of money, answered by `pricing` against a scenario, and it never
+    fails anybody.
     """
     sub = Submission()
     try:
-        cluster, expects, budgets = build_mr(source)
+        cluster, expects = build_mr(source)
     except NotationError as e:
         d = e.diagnostics[0]
         sub.results.append(CaseResult(
@@ -464,19 +449,6 @@ def judge_mr(source: str) -> Submission:
             f"expect {key}={want}",
             Verdict.AC if ok else Verdict.WA,
             "" if ok else f"line {line}: counted {got if got is not None else 0}",
-            score=1.0 if ok else 0.0))
-
-    metrics = measure(cluster.sorted_trace())
-    for name, op, limit, line in budgets:
-        metric_key, human = BUDGET_METRICS[name]
-        actual = metrics[metric_key].value
-        ok = {"<": actual < limit, "<=": actual <= limit,
-              ">": actual > limit, ">=": actual >= limit}[op]
-        sub.results.append(CaseResult(
-            f"budget {name} {op} {limit:g}",
-            Verdict.AC if ok else Verdict.WA,
-            "" if ok else f"line {line}: {human} was {actual:.2f}, "
-                          f"which is not {op} {limit:g}",
             score=1.0 if ok else 0.0))
 
     return sub

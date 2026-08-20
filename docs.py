@@ -3,7 +3,7 @@
 Generate the documentation site.
 
     python docs.py --site docs && mkdocs build
-    python docs.py --single ../spikey-dsl-sol/LANGUAGE.md
+    python docs.py --single ../BCS-DS-Assignment-Solution/LANGUAGE.md
 
 The pages come from the same tables the editor reads for hovers and
 completions, so the written reference cannot drift from what the tool
@@ -18,8 +18,8 @@ Two consequences, both deliberate:
     held-out data has ever lived, so the documentation simply cannot reach
     it. Do not add the import back "just for the titles".
   * Examples are written in a domain no exercise uses. A reference that
-    demonstrates `emit` with the exercise's own mapper is an answer sheet
-    with a table of contents.
+    demonstrates a comprehension with the exercise's own mapper is an answer
+    sheet with a table of contents.
 
 `tests/docs_test.py` enforces both.
 """
@@ -140,11 +140,18 @@ def write_site(root: str = "docs") -> list[str]:
         "| `string` | text |",
         "| `[int]` | a list of numbers |",
         "| `[string]` | a list of text |",
-        "| `pair` | a (key, value) pair |",
+        "| `pair` | a (key, value) pair, written `(key, value)` |",
+        "| `[pair]` | a list of pairs — what a map answers with |",
         "| `void` | nothing |",
         "",
         "`[int]` and `[string]` are deliberately distinct: the mistakes worth",
         "catching are the ones that confuse a list of counts with a list of words.",
+        "",
+        "A function that produces one thing returns it. A function that",
+        "produces an unknown number of them returns a list, and says so: a map",
+        "is handed one record and answers `[pair]`, because how many pairs it",
+        "makes is not known until it has made them. A reduce collapses many",
+        "values into exactly one, so it answers with that one value.",
         "",
         "## Several files",
         "",
@@ -171,6 +178,52 @@ def write_site(root: str = "docs") -> list[str]:
         for name in names:
             lines += _entry(known[name])
         put(f"language/{slug}.md", lines)
+
+    # The catalogue, straight off the language's own table so the page cannot
+    # drift from what a program is actually allowed to buy.
+    from dsviz.machine_types import CATALOGUE  # noqa: E402
+    put("language/machines-you-can-buy.md", _front(
+        "Machines you can buy",
+        "The catalogue, and what each type comes with.") + [
+        "# Machines you can buy",
+        "",
+        "A machine is not built to order. There is a catalogue, you pick a",
+        "type off it, and the machine arrives with the processor and the room",
+        "that type comes with — so making something faster is a purchase",
+        "rather than a number typed into the program.",
+        "",
+        "| Type | Processor | Room | For |",
+        "|---|---|---|---|",
+    ] + [
+        f"| `{t.name}` | {t.speed:g}x | {t.capacity} items | {t.why} |"
+        for t in CATALOGUE.values()
+    ] + [
+        "",
+        "The letter says what the machine is built for. `c` has the",
+        "processor, for work that is slow because there is a lot of it to do.",
+        "`r` has the room, for a machine handed more than it can hold — that",
+        "one does not get better on a quicker processor. `m` is the middle of",
+        "both, and `t` is the cheap one, which is how you are given a",
+        "straggler.",
+        "",
+        "```python",
+        '@machine',
+        'class Worker:',
+        '    pass',
+        '',
+        'fast = Worker(type="c1.large")',
+        'roomy = Worker(type="r1.large")',
+        'ordinary = Worker()          # m1.small, if you say nothing',
+        "```",
+        "",
+        "Each type is drawn in its own colour, so a fleet of mixed machines",
+        "reads as mixed at a glance.",
+        "",
+        "A job that will not fit on one machine can be moved to a bigger one,",
+        "or made smaller before it is sent. Both are answers. Which is",
+        "cheaper is the question the catalogue exists to ask, and the panel",
+        "under the diagram is where the answer shows.",
+    ])
 
     lines = _front("Built-in functions",
                    "The small library every program can call.") + [

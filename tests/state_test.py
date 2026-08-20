@@ -49,7 +49,7 @@ class Turnstile:
         passages: int = passages + 1
         return passages
 
-gate = Turnstile(speed=1.0)
+gate = Turnstile(type="m1.small")
 foyer = Turnstile(passages=10)
 
 world = World(machines=[gate, foyer])

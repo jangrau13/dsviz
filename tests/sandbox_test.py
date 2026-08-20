@@ -53,12 +53,34 @@ for bad in ESCAPES:
     else:
         raise AssertionError(f"NOT BLOCKED: {bad!r} evaluated instead of raising")
 
+print("\n=== a written type is what separates a loop from an escape ===")
+# The walker has no comprehension node and must never grow one. The typed form
+# is run by hand in `_eval_expr` before `ast.parse` sees it, which is why
+# `[x for x in [1, 2]]` above is still refused while this evaluates.
+assert ev("[(c, 1) for c: string in stops]", {"stops": ["bern", "chur"]}) == [
+    ("bern", 1), ("chur", 1)]
+assert ev("[n * 2 for n: int in [1, 2, 3]]") == [2, 4, 6]
+try:
+    ev("[(1).__class__ for n: int in [1]]")
+except NotationError:
+    print("blocked: an escape inside a typed comprehension")
+else:
+    raise AssertionError("NOT BLOCKED: escape inside a comprehension")
+print("ok — typed comprehensions run, untyped ones do not")
+
 print("\n=== the CI grading path (judge_assignment -> build_mr) is also safe ===")
-# A map function whose emit tries to walk the object graph. This bypasses the
-# Lark gate entirely, exactly like gate/grade.py does.
+# A map whose pairs try to walk the object graph, written as a program a
+# student could hand in: the grading path assembles the task's starter around
+# it and checks the whole thing.
+#
+# Two independent things have to refuse this, and either alone would do: the
+# grammar forbids `.` in a name, and the walker above has no Attribute node.
+# The assertion is only that it never scores — which of the two catches it is
+# not this test's business, and the direct escapes above are what pin the
+# walker itself.
 malicious = (
     "map(key, value):\n"
-    "    emit((1).__class__.__base__.__subclasses__(), 1)\n"
+    "    return [((1).__class__.__base__.__subclasses__(), 1)]\n"
     "\n"
     "reduce(key, values):\n"
     "    sum(values)\n"

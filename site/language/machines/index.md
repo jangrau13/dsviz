@@ -8,7 +8,7 @@ class Name:\`
 
 A kind of machine.
 
-The decorator says what the class is to the simulator. @machine both answers calls and makes them, @mapper and @reducer are the two halves of a job, and @process carries a clock. A class is only a kind of machine. What runs is an instance of it.
+The decorator says what the class is to the simulator. @machine both answers calls and makes them, and @process carries a clock. A machine is a machine: which half of a job it does is the job's to decide, the same way a master hands out tasks. A class is only a kind of machine. What runs is an instance of it.
 
 ```
 @machine
@@ -70,14 +70,26 @@ vault = Ledger(balance=5000)
 petty = Ledger(balance=40)
 ```
 
-### `Kind(speed=N)`
+### `Kind(type="m1.small")`
 
-Relative speed of one machine.
+Which machine to buy.
 
-1.0 is nominal and 0.25 takes four times as long. This is how you make a straggler.
+A machine is not built to order: there is a catalogue, you pick a type off it, and the machine arrives with the processor and the room that type comes with. `m1.small` is the ordinary one and what you get if you say nothing.
+
+The letter says what it is built for. `c` has the processor, for work that is slow because there is a lot of it. `r` has the room, for a machine handed more than it can hold — that one does not get better with a faster processor. `m` is the middle of both and `t` is the cheap one, which is how you make a straggler.
+
+Each type is drawn in its own colour, so a fleet of mixed machines reads as mixed at a glance.
 
 ```
-slow = Worker(speed=0.25)
+  t1.small   0.3x  room 8   cheap and slow
+  m1.small     1x  room 16  the ordinary machine, and what to reach for first
+  m1.large     2x  room 32  twice the processor and twice the room
+  c1.large     4x  room 16  four times the processor, ordinary room
+  r1.large     1x  room 96  ordinary processor, six times the room
+```
+
+```
+slow = Worker(type="t1.small")
 ```
 
 ### `@duration(T)`

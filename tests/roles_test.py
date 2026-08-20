@@ -46,8 +46,8 @@ def role_errors(src, fname, role):
 
 
 # --- any name works, so long as the shape fits --------------------------
-COUNTING = '''def tokenize(key: string, value: string) -> void:
-    emit(value, 1)
+COUNTING = '''def tokenize(key: string, value: string) -> [pair]:
+    return [(value, 1)]
 
 def total(key: string, values: [int]) -> int:
     return sum(values)
@@ -59,8 +59,8 @@ for fname, role in (("tokenize", "map"), ("total", "reduce"), ("byKey", "partiti
     ok(f"{fname} is accepted as a {role}", not role_errors(COUNTING, fname, role))
 
 # --- the value type is the student's, and holds across the job ----------
-CRAWLING = '''def links(key: string, value: string) -> void:
-    emit(value, key)
+CRAWLING = '''def links(key: string, value: string) -> [pair]:
+    return [(value, key)]
 
 def gather(key: string, values: [string]) -> string:
     return key
@@ -70,8 +70,8 @@ ok("a string-valued reduce is accepted",
    "MapReduce is not only word count")
 
 # --- wrong declarations are refused, in the student's own terms ---------
-WRONG_ARITY = '''def half(value: string) -> void:
-    emit(value, 1)
+WRONG_ARITY = '''def half(value: string) -> [pair]:
+    return [(value, 1)]
 '''
 errs = role_errors(WRONG_ARITY, "half", "map")
 ok("too few parameters is an error", bool(errs))
@@ -79,8 +79,8 @@ ok("the message counts what the student wrote",
    errs and "takes 1 parameter" in str(errs[0]),
    str(errs[0]).splitlines()[0] if errs else "")
 
-WRONG_TYPE = '''def odd(key: int, value: string) -> void:
-    emit(value, 1)
+WRONG_TYPE = '''def odd(key: int, value: string) -> [pair]:
+    return [(value, 1)]
 '''
 errs = role_errors(WRONG_TYPE, "odd", "map")
 ok("a wrongly typed parameter is an error", bool(errs))
@@ -95,9 +95,20 @@ errs = role_errors(COUNTING, "total", "partition")
 ok("a reducer is not accepted as a partitioner", bool(errs),
    str(errs[0]).splitlines()[0] if errs else "")
 
+# --- and what it answers with is part of the shape ----------------------
+# A mapper is handed one record and answers with every pair it made from it.
+# Declaring that it answers with nothing is the shape of the old language, and
+# it does not fit here.
+SAYS_VOID = '''def quiet(key: string, value: string) -> void:
+    return [(value, 1)]
+'''
+errs = role_errors(SAYS_VOID, "quiet", "map")
+ok("a map that says it answers with nothing is refused", bool(errs),
+   str(errs[0]).splitlines()[0] if errs else "")
+
 # --- every parameter must carry a type ----------------------------------
-UNTYPED = '''def loose(key, value) -> void:
-    emit(value, 1)
+UNTYPED = '''def loose(key, value) -> [pair]:
+    return [(value, 1)]
 '''
 _, diags = parse(UNTYPED)
 ok("an untyped parameter is refused at parse time",

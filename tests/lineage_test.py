@@ -48,11 +48,11 @@ INPUT = ('input rows: "the cat sat" | "the mat sat" | "a cat sat" '
          '| "the dog ran"\n')
 
 
-def program(body: str, machines: int = 2, speeds=None) -> str:
-    speeds = speeds or [1.0] * machines
-    decls = "\n".join(f"e{i + 1} = Executor(speed={s})"
-                      for i, s in enumerate(speeds))
-    names = ", ".join(f"e{i + 1}" for i in range(len(speeds)))
+def program(body: str, machines: int = 2, types=None) -> str:
+    types = types or ["m1.small"] * machines
+    decls = "\n".join(f'e{i + 1} = Executor(type="{t}")'
+                      for i, t in enumerate(types))
+    names = ", ".join(f"e{i + 1}" for i in range(len(types)))
     return ("@machine\nclass Executor:\n    pass\n"
             f"{decls}\n"
             f"world = World(machines=[{names}])\n\n"
@@ -225,9 +225,9 @@ ok("reduceByKey ships less than groupByKey",
 # The straggler. A stage is not finished until its slowest member is, so a
 # slow machine must lengthen the run rather than being averaged away.
 even = run(WORDS + "job = Spark(pipeline=counts)\nworld.run(job)",
-           speeds=[1.0, 1.0, 1.0])
+           types=["m1.small"] * 3)
 straggler = run(WORDS + "job = Spark(pipeline=counts)\nworld.run(job)",
-                speeds=[1.0, 1.0, 0.2])
+                types=["m1.small", "m1.small", "t1.small"])
 ok("a slow executor lengthens the run rather than being averaged away",
    straggler["makespan"] > even["makespan"],
    f"straggler {straggler['makespan']:.2f} vs even {even['makespan']:.2f}")
@@ -238,9 +238,9 @@ ok("a slow executor lengthens the run rather than being averaged away",
 # The claim behind declaring a world at all. Not linear — a shuffle does not
 # get cheaper with more machines — but it must not be flat, or the size of a
 # cluster would be a decoration.
-small = run(WORDS + "job = Spark(pipeline=counts)\nworld.run(job)", speeds=[1.0])
+small = run(WORDS + "job = Spark(pipeline=counts)\nworld.run(job)", types=["m1.small"])
 big = run(WORDS + "job = Spark(pipeline=counts)\nworld.run(job)",
-          speeds=[1.0] * 4)
+          types=["m1.small"] * 4)
 ok("a bigger cluster finishes sooner", big["makespan"] < small["makespan"],
    f"4 executors {big['makespan']:.2f} vs 1 {small['makespan']:.2f}")
 

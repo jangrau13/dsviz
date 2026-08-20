@@ -31,9 +31,8 @@ from dsviz.assignment import ASSIGNMENTS      # noqa: E402,F401
 
 # The graded task's three functions, deliberately named nothing like the
 # positions they fill: what makes a function a mapper is being passed as one.
-FUNCS = '''def perDay(key: string, value: string) -> void:
-    for branch: string in split(lower(value)):
-        emit(branch, 1)
+FUNCS = '''def perDay(key: string, value: string) -> [pair]:
+    return [(branch, 1) for branch: string in split(lower(value))]
 
 def addUp(key: string, values: [int]) -> int:
     return sum(values)
@@ -43,7 +42,7 @@ def spread(key: string, n: int) -> int:
 '''
 
 WIRING = '''
-job = MapReduce(map=perDay, reduce=addUp, partition=spread)
+job = MapReduce(map=perDay, reduce=addUp, partition=spread, partitions=2)
 world.run(job)
 '''
 

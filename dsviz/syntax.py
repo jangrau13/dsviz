@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from lark import Token
 
 from . import pyspark
+from .machine_types import CATALOGUE as MACHINE_TYPES, DEFAULT_TYPE
+from .machine_types import names as machine_type_names
 from .notation import Diagnostic
 
 # --- grammar -------------------------------------------------------------
@@ -187,7 +189,7 @@ class Instance:
     """
     A machine that actually exists.
 
-        @mapper
+        @machine
         class Worker:
             pass
 
@@ -196,7 +198,7 @@ class Instance:
 
     The class says what kind of machine this is and what it can do; the
     instance is the one that runs, carrying its own speed and failure
-    behaviour. Two mappers of the same kind are two instances rather than two
+    behaviour. Two machines of the same kind are two instances rather than two
     near-identical class declarations, and the name on the timeline is the name
     of the instance — `slow`, not `Worker`.
     """
@@ -1145,21 +1147,58 @@ def check_jobs(mod: Module) -> list[Diagnostic]:
     return diags
 
 
+# What a decorator above a class may say.
+CLASS_KINDS = ("machine", "process")
+
+
 def check_machines(mod: Module) -> list[Diagnostic]:
     """
-    A machine's settings have to mean something.
+    A machine's settings have to mean something, and so does its decorator.
 
     `on_crash` in particular: it is the one setting whose wrong value is
     invisible. A misspelling silently reads as the default, so a student who
     wrote `on_crash="restarts"` would watch their machine stay dead and
     conclude that restarting does not work.
+
+    A decorator nobody knows is the same kind of mistake one size up. A class
+    the runtime does not recognise declares machines that no world can hold,
+    so the program runs on machines the engine invented, under names the
+    student never wrote, and looks like it worked.
     """
     diags: list[Diagnostic] = []
+    for cls in mod.classes.values():
+        if cls.kind in CLASS_KINDS or not cls.decorators:
+            continue
+        diags.append(Diagnostic(
+            cls.line, 1, "error",
+            f"@{cls.kind} is not a kind of class",
+            hint=f"a class is {' or '.join('@' + k for k in CLASS_KINDS)}. "
+                 f"Which half of a job a machine does is the job's to decide, "
+                 f"not the class's — say how many partitions it has with "
+                 f"partitions=N"))
+
     for inst in mod.instances.values():
         cls = mod.classes.get(inst.cls)
-        if cls is None or cls.kind not in ("machine", "mapper", "reducer", "process"):
+        if cls is None or cls.kind not in CLASS_KINDS:
             continue
         for key, value in inst.settings.items():
+            if key == "speed":
+                diags.append(Diagnostic(
+                    inst.line, 1, "error",
+                    "a machine is not built to order — pick a type",
+                    hint=f"speed comes with the machine you buy: "
+                         f"{inst.var} = {inst.cls}(type=\"{DEFAULT_TYPE}\"). "
+                         f"The catalogue is "
+                         f"{', '.join(machine_type_names())}"))
+                continue
+            if key == "type":
+                if str(value) not in MACHINE_TYPES:
+                    diags.append(Diagnostic(
+                        inst.line, 1, "error",
+                        f"there is no machine of type {str(value)!r}",
+                        hint=f"the catalogue is "
+                             f"{', '.join(machine_type_names())}"))
+                continue
             if key == "on_crash":
                 if str(value) not in CRASH_BEHAVIOURS:
                     diags.append(Diagnostic(
@@ -1353,7 +1392,7 @@ def lint(source: str) -> tuple[Module, list[Diagnostic]]:
 # it was not given. A mapper and a service are the same sort of thing here:
 # both take time, both can break, and both have to say what happens after.
 MACHINE_SETTINGS = {
-    "speed": (1.0, float),
+    "type": (DEFAULT_TYPE, str),
     "error_rate": (0.0, float),
     "on_crash": ("stay_dead", str),
     "restart_after": (1.0, float),
@@ -1363,15 +1402,36 @@ MACHINE_SETTINGS = {
 CRASH_BEHAVIOURS = ("stay_dead", "restart")
 
 
+def machine_settings(written: dict, declared: dict | None = None) -> dict:
+    """
+    What one machine is, from what was written on it and on its class.
+
+    The single place a type becomes a processor and a room. Every path that
+    builds a machine comes through here, because a second copy of this loop is
+    a second answer to "what did I buy": one that records the type and hands
+    back an ordinary machine, which is the kind of mistake that shows up as a
+    bill for something you did not get.
+    """
+    declared = declared or {}
+    out: dict = {}
+    for key, (default, cast) in MACHINE_SETTINGS.items():
+        raw = written.get(key, declared.get(key, default))
+        try:
+            out[key] = cast(raw)
+        except (TypeError, ValueError):
+            out[key] = default
+    known = MACHINE_TYPES.get(out["type"], MACHINE_TYPES[DEFAULT_TYPE])
+    out.update(known.settings())
+    return out
+
+
 def declared_machines(source: str) -> list:
     """
     Every machine the running world contains: (name, kind, settings).
 
-    One reading of the world for every dialect. MapReduce used to read only
-    `speed` off its mappers and Spark did not read the world at all — it
-    invented `executor-1..n` from a count — so the same declaration meant
-    three different things depending on which exercise you were in. Settings
-    fall back to the class decorator, then to the defaults above.
+    One reading of the world for every dialect, so the same declaration means
+    the same thing whichever exercise it is in. Settings fall back to the
+    class decorator, then to the defaults above.
     """
     mod, _ = from_tree(source)
 
@@ -1392,13 +1452,7 @@ def declared_machines(source: str) -> list:
             continue
         cls = mod.classes.get(inst.cls)
         declared = cls.decorators[0].args if cls is not None and cls.decorators else {}
-        settings = {}
-        for key, (default, cast) in MACHINE_SETTINGS.items():
-            raw = inst.settings.get(key, declared.get(key, default))
-            try:
-                settings[key] = cast(raw)
-            except (TypeError, ValueError):
-                settings[key] = default
+        settings = machine_settings(inst.settings, declared)
         out.append((var, cls.kind if cls else "", settings))
     return out
 
@@ -1429,20 +1483,22 @@ def to_funcs(mod: Module) -> dict:
 # The student writes the whole declaration — its name, how many parameters it
 # takes, and the type of each — and then hands it to a job:
 #
-#     def readSensor(station: string, payload: string) -> void:
-#         for reading: string in split(payload):
-#             emit(station, 1)
+#     def readSensor(station: string, payload: string) -> [pair]:
+#         return [(station, degrees) for degrees: string in split(payload)]
 #
-#     job = MapReduce(map=readSensor, reduce=hottest, partition=spread)
+#     job = MapReduce(map=readSensor, reduce=hottest, partition=spread,
+#                     partitions=2)
 #
 # (The example is deliberately in a domain no task uses. This module ships to
 # students, so what it demonstrates is documentation.)
 #
-# Nothing is called `map` by decree any more. What makes `readSensor` a mapper
-# is that it fits: two parameters, both strings, emitting rather than returning.
-# That is a property of the signature the student wrote, which is exactly what
-# writing signatures out is for — so the check below is the language keeping
-# its side of the bargain, not an extra hurdle.
+# Nothing is a mapper by being called `map`. What makes `readSensor` one is
+# that it fits: two parameters, both strings, answering with a list of the
+# pairs it made. One record in, any number of pairs out — which is why the
+# return type is a list, and why it is written down. That is a property of the
+# signature the student wrote, which is exactly what writing signatures out is
+# for — so the check below is the language keeping its side of the bargain,
+# not an extra hurdle.
 
 @dataclass
 class Role:
@@ -1459,12 +1515,12 @@ class Role:
 # The value type a job carries is written V: it is whatever the student's own
 # annotations say, consistent across the functions of one job.
 ROLES = {
-    "map":       Role("map", ["string", "string"], "void",
-                      "called once per input record; emits pairs"),
+    "map":       Role("map", ["string", "string"], "[pair]",
+                      "called once per input record; returns the pairs it made"),
     "reduce":    Role("reduce", ["string", "[V]"], "V",
                       "called once per key with all of its values"),
     "partition": Role("partition", ["string", "int"], "int",
-                      "chooses a reducer for a key"),
+                      "chooses a partition for a key"),
     "combine":   Role("combine", ["string", "[V]"], "V",
                       "reduces on the mapper, before the shuffle"),
     # A job that is simply a sequence of calls. MapReduce is handed the three
@@ -1483,7 +1539,7 @@ def check_role(fn, role: Role, bound: dict, line: int) -> list:
     Reports what is wrong in terms of the declaration they wrote — the number
     of parameters, then each type in turn — rather than announcing that some
     fixed signature was expected. `bound` carries the job's value type between
-    functions, so a mapper emitting ints and a reducer taking [string] is
+    functions, so a mapper making int pairs and a reducer taking [string] is
     caught as the disagreement it is.
     """
     diags = []
@@ -1510,6 +1566,18 @@ def check_role(fn, role: Role, bound: dict, line: int) -> list:
             f"{fn.name}'s parameter {fn.params[i]!r} is {declared}, but a "
             f"{role.name} receives {expected} there",
             hint=f"a {role.name} {role.summary}"))
+
+    # And what it answers with, which is half of what a signature says: a map
+    # answers with the pairs it made, a reduce with one value. A function
+    # declared to answer with something else does not fit the position.
+    if fn.ret and fn.ret != "any":
+        expected = _resolve(role.ret, bound, fn.ret)
+        if expected is not None and fn.ret != expected:
+            diags.append(Diagnostic(
+                line, 1, "error",
+                f"{fn.name} answers with {fn.ret}, but a {role.name} answers "
+                f"with {expected}",
+                hint=f"a {role.name} {role.summary}"))
     return diags
 
 

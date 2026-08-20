@@ -22,14 +22,27 @@ def hottest(city: string, readings: [int]) -> int:
     return top
 ```
 
-### `emit(key, value)`
+### `[element for name: type in list]`
 
-Produce one intermediate pair.
+One element out for each element in.
 
-Only the function passed as the job's map may emit. The key chooses a reducer by its hash, and the value is whatever the reducer takes.
+How a function that has to produce many things produces them. A map is handed one record and answers with every pair it made from it, which may be none, one, or thousands — so it answers with a list, and this is how that list is built.
+
+Read it right to left: take each `reading` out of `split(payload)`, and for each one put a pair into the list. The loop variable carries its type for the same reason it does in a `for` statement: nothing here is inferred.
 
 ```python
-emit(city, reading)
+def perStation(station: string, payload: string) -> [pair]:
+    return [(station, reading) for reading: string in split(payload)]
+```
+
+### `(key, value)`
+
+The two halves of one intermediate result.
+
+What a map answers with a list of. The key decides which partition it goes to, and the value is whatever the reducer takes — a count, a document name, anything the job is about. A list of them is written `[pair]`, which is what a map declares as its return type.
+
+```python
+(station, reading)
 ```
 
 ### `with parallel():`

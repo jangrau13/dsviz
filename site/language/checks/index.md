@@ -2,16 +2,6 @@
 
 Statements that assert something about a run.
 
-### `budget METRIC < N`
-
-A non-functional limit.
-
-Correctness is the floor. Budgets are what separate a good design from one that merely works. The metrics are network, makespan, imbalance, tail, memory and faults.
-
-```
-budget network < 40
-```
-
 ### `expect KEY = N`
 
 Assert a final count.

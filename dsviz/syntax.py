@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 
 from lark import Token
 
+from . import pyspark
 from .notation import Diagnostic
 
 # --- grammar -------------------------------------------------------------
@@ -323,6 +324,9 @@ class Module:
     worlds: dict = field(default_factory=dict)      # world = World(machines=[…])
     runs: list = field(default_factory=list)        # world.run(job)
     inputs: dict = field(default_factory=dict)      # input rows: "…" | "…"
+    # Top-level `a.b(...)` lines nothing claimed. Kept rather than discarded:
+    # a line the parser cannot place is a line the student wrote and meant.
+    dropped: list = field(default_factory=list)     # (receiver, method, line)
 
     def machines(self) -> dict:
         """Instances whose class is one of `kinds`, by the name they were given."""
@@ -874,10 +878,14 @@ def from_tree(source: str) -> tuple[Module, list[Diagnostic]]:
         return True
 
     for node in deferred:
-        handled = (add_action(node) if getattr(node, "data", None) == "action"
-                   else add_assign(node))
+        is_action = getattr(node, "data", None) == "action"
+        handled = add_action(node) if is_action else add_assign(node)
         if not handled:
             mod.statements.append((_tok(node), position(node)[0]))
+            if is_action:
+                mod.dropped.append((_tok(node.children[0]),
+                                    _tok(node.children[1]),
+                                    position(node)[0]))
 
     # Every parameter must carry a type; the grammar makes that structural, so
     # a missing one is a parse error rather than something to re-check here.
@@ -965,6 +973,70 @@ def callers_in(mod: Module) -> list:
            for cls in mod.classes.values()
            for method in cls.methods.values()]
     return out + list(mod.functions.values())
+
+
+def check_dropped(mod: Module) -> list[Diagnostic]:
+    """
+    A line that does nothing must say so.
+
+    `world.run(job)` is a top-level call the parser claims. Anything else of
+    the same shape — `counts.collect()`, `out.nonsense()`, `nosuchrdd.count()`
+    — was parsed, matched nothing, and was dropped on the floor. No result, no
+    error, no squiggle in the editor, so the student concludes it worked.
+
+    Writing `counts.collect()` at the end is the most reflexive thing a person
+    carrying PySpark habits does, and silence is the worst possible answer to
+    it. A typo'd RDD name is worse still: the line evaporates and the program
+    runs as though it had never been written.
+
+    This is the same failure as an engine filling in a default — a program
+    scoring for work it never did — one level up. There the engine supplied
+    what was missing; here the parser deletes what was present.
+    """
+    diags: list[Diagnostic] = []
+    known = {r.var for r in mod.rdds}
+    for receiver, method, line in mod.dropped:
+        if receiver in known and method in pyspark.ACTIONS:
+            diags.append(Diagnostic(
+                line, 1, "error",
+                f"{method}() here does nothing",
+                hint=f"an action does not belong in the program text: the "
+                     f"pipeline is handed to a job and the job is run, so "
+                     f"the work happens at world.run(...). Delete this line, "
+                     f"or pass {receiver} as the pipeline."))
+        elif receiver in known:
+            ops = ", ".join(sorted(pyspark.NARROW | pyspark.WIDE))
+            diags.append(Diagnostic(
+                line, 1, "error",
+                f"{receiver} has no {method!r}",
+                hint=f"an RDD answers: {ops}"))
+        elif receiver in mod.instances:
+            # A machine at the top level is doing something to itself — the
+            # lifecycle calls, and the ways processes talk. Those are real
+            # statements the runtime answers, so they are not dropped and must
+            # not be reported. Anything else named on a machine here is a
+            # method that does not exist.
+            instance = mod.instances[receiver]
+            cls = mod.classes.get(instance.cls)
+            answers = set(BUILTIN_CALLS) | set(cls.methods if cls else ())
+            if method not in answers:
+                offer = ", ".join(sorted(answers)) or "nothing yet"
+                diags.append(Diagnostic(
+                    line, 1, "error",
+                    f"{receiver} does not answer {method!r}",
+                    hint=f"a {instance.cls} answers: {offer}"))
+        elif receiver not in mod.worlds:
+            names = ", ".join(sorted(known | set(mod.instances))) or "none yet"
+            diags.append(Diagnostic(
+                line, 1, "error",
+                f"there is nothing called {receiver!r}",
+                hint=f"in this program: {names}"))
+        else:
+            diags.append(Diagnostic(
+                line, 1, "error",
+                f"{receiver}.{method}() does nothing here",
+                hint="a world is asked to run a job: world.run(job)"))
+    return diags
 
 
 def check_parallel(mod: Module) -> list[Diagnostic]:
@@ -1267,6 +1339,7 @@ def lint(source: str) -> tuple[Module, list[Diagnostic]]:
     """Parse and check a program. One front end, one checker, every dialect."""
     mod, diags = from_tree(source)
     return mod, diags or (check_calls(mod) + check_parallel(mod)
+                          + check_dropped(mod)
                           + check_jobs(mod) + check_world(mod)
                           + check_machines(mod) + check_state(mod))
 
